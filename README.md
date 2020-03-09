@@ -1,8 +1,7 @@
 # EEB498-RProject
 EEB498 Independent R Project
 
-![UofT EEB logo](https://twitter.com/eebtoronto/photo
-https://pbs.twimg.com/profile_images/1087712161068134401/wjj4km3L_400x400.jpg)
+![UofT EEB logo](https://pbs.twimg.com/profile_images/1087712161068134401/wjj4km3L_400x400.jpg)
 
 Author: Jeonghoon Lee
 
