@@ -1,6 +1,8 @@
 # EEB498-RProject
 EEB498 Independent R Project
 
+![UofT EEB logo](/Users/John/Desktop/Current Courses/EEB498/UofTEEB.jpg)
+
 Author: Jeonghoon Lee
 
 Supervisor: Benjamin Gilbert
