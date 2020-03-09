@@ -24,7 +24,7 @@ opts_chunk$set(tidy.opts = list(width.cutoff = 70), tidy = FALSE)
 
 # Absolute abundance dataset has been manipulated to remove Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, and Symphyothricum_latiflorium (no abundance across all plots)
 # Absolute abundance dataset has been manipulated to include only 2m plots and to assign new Plot values
-ksr_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018 2m survey.csv") %>% 
+ksr_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018 2m survey.csv") %>% 
   filter(Size == 2) %>% 
   unite(Plot, c(Block, Plot), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
@@ -36,7 +36,7 @@ ksr_abun_matrix <- ksr_abundance %>%
 
 # Functional trait dataset has been manipulated to remove Lolium aparine and Silene latifolia species (no abundance values)
 # Functional dataset has been manipulated to assign new Plot values and to summarise SLA trait values for each species per plot
-ksr_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv") %>% 
+ksr_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
   filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
   unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
@@ -61,14 +61,14 @@ ksr_trait_sum <- ksr_trait %>%
   data.matrix()
 
 # REND datasets
-ksr_REND_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv") %>% 
+ksr_REND_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
   filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
   unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
   select(-c(Number : `Area_.cm2.`)) %>% 
   filter(Species!='Asclepias_tuberosa' & Species!='Cirsium_vulgare' & Species!='Melilotus_albus')
 
-ksr_REND_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018 2m survey.csv") %>% 
+ksr_REND_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018 2m survey.csv") %>% 
   filter(Size == 2) %>% 
   unite(Plot, c(Block, Plot), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
