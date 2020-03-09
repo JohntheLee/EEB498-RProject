@@ -1,0 +1,125 @@
+---
+title: "EEB498 - Independent Project - Preliminary Data Visualization"
+output:
+  pdf_document:
+    toc: false
+    number_section: true
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=70),tidy=TRUE)
+species_abundance <- read_csv('~/Desktop/Current Courses/EEB498/EEB498_IndpProj/Species_Abundance.csv')
+species_trait <- read_csv('~/Desktop/Current Courses/EEB498/EEB498_IndpProj/Species_Trait.csv')
+```
+
+**All .csv files are provided by Leila Forsyth (Benjamin Gilbert Lab).**
+
+# Creating and subsetting the species abundance dataframe and the species trait dataframe
+
+The final dataframe contains the species abundances for the 2x2m plots in year 2016. Abundance values for 'Plot' conditions, for 'Partial' conditions, 'Fert' conditions, and for 'Mix' conditions have all been merged appropriately. Relative abundances and ranks for each block have been calculated.
+
+```{r}
+species_abundance_final <- species_abundance %>% 
+  filter(Plot.size==2.0 & Year==2016) %>% 
+  pivot_longer(Agrostis_gigantea:Veronica_officinalis, names_to='Species', values_to='Abundance') %>% 
+  group_by(Block, Species) %>% 
+  summarise(Total_Abundance=sum(Abundance)) %>% 
+  group_by(Block) %>% 
+  mutate(Relative_Abundance=Total_Abundance/sum(Total_Abundance)) %>% 
+  group_by(Block) %>% 
+  arrange(desc(Total_Abundance)) %>% 
+  mutate(Rank=rank(-Total_Abundance, ties.method='min')) %>% 
+  arrange(Block)
+```
+
+The species abundance dataframe has been joined with the species trait dataframe (by species). All relative abundance values equaling 0 have been filtered out.
+
+```{r}
+species_trait_final <- full_join(species_abundance_final, species_trait, by='Species') %>% 
+  filter(Relative_Abundance!=0) %>% 
+  pivot_longer(Height:SLA, names_to='Trait_Type', values_to='Trait_Value') %>% 
+  select(Block, Species, Relative_Abundance, Trait_Type, Trait_Value)
+```
+
+# Visualizing the dataframes
+
+## Raw rank-abundance curves
+
+```{r}
+raw_abundance_curves <- function(df){
+  raw_abundance_list <- unique(species_abundance_final$Block)
+  for(i in seq_along(raw_abundance_list)){
+    raw_abundance_plots <- ggplot(species_abundance_final %>% filter(Block==raw_abundance_list[i]), aes(Rank, Total_Abundance))+
+      geom_point()+ geom_line()+
+      scale_x_continuous(breaks=seq(0,45,1))+
+      scale_y_continuous(breaks=seq(0,1000,100))+
+      theme(panel.grid.minor=element_blank(), axis.text=element_text(size=7))+
+      labs(x='Rank', y='Total Abundance')+
+      ggtitle(paste('Raw Rank-Abundance Curve for Block ', raw_abundance_list[i], sep=''))
+    print(raw_abundance_plots)
+  }
+}
+raw_abundance_curves(species_abundance_final)
+```
+
+## Relative rank-abundance curves
+
+```{r}
+relative_abundance_curves <- function(df){
+  relative_abundance_list <- unique(species_abundance_final$Block)
+  for(i in seq_along(relative_abundance_list)){
+    relative_abundance_plots <- ggplot(species_abundance_final %>% filter(Block==relative_abundance_list[i]), aes(Rank, Relative_Abundance))+
+      geom_point()+ geom_line()+
+      scale_x_continuous(breaks=seq(0,45,1))+
+      scale_y_continuous(breaks=seq(0,0.5,0.05))+
+      theme(panel.grid.minor=element_blank(), axis.text=element_text(size=7))+
+      labs(x='Rank', y='Relative Abundance')+
+      ggtitle(paste('Relative Rank-Abundance Curve for Block ', relative_abundance_list[i], sep=''))
+    print(relative_abundance_plots)
+  }
+}
+relative_abundance_curves(species_abundance_final)
+```
+
+## Functional trait scatterplots
+
+The method used for geom_smooth was loess. In creating the scatterplots, NA values and non-finite values were removed.
+
+```{r message=FALSE, warning=FALSE}
+abundance_trait_scatter <- function(df){
+  rel_abundance_list <- unique(species_trait_final$Block)
+  for(i in seq_along(rel_abundance_list)){
+    abundance_trait_plots <- ggplot(species_trait_final %>% filter(Block==rel_abundance_list[i]), aes(Trait_Value, Relative_Abundance, colour=Species, group=Trait_Type))+
+      geom_point()+ geom_smooth()+
+      facet_wrap(~Trait_Type, scale='free_x')+
+      theme(legend.position='none')+
+      labs(x='Trait value', y='Relative Abundance')+
+      scale_y_continuous(limits=c(-0.1,0.3), trans='log10')+
+      ggtitle(paste('Scatterplot of relative abundance of each species
+                    plotted against trait values for Block ', rel_abundance_list[i], sep=''))
+    print(abundance_trait_plots)
+  }
+}
+abundance_trait_scatter(species_trait_final)
+```
+
+Distribution histogram of functional trait values (relative abundances are taken out).
+
+```{r message=FALSE, warning=FALSE}
+trait_hist <- function(df){
+  trait_dstr_list <- unique(species_trait_final$Block)
+  for(i in seq_along(trait_dstr_list)){
+    trait_hist_plots <- ggplot(species_trait_final %>% filter(Block==trait_dstr_list[i]), aes(Trait_Value, colour=Species, group=Trait_Type))+
+      geom_histogram(bins=20)+
+      facet_wrap(~Trait_Type, scale='free_x')+
+      theme(legend.position='none')+
+      labs(x='Trait value', y='Frequency')+
+      scale_y_continuous(trans='log10')+
+      ggtitle(paste('Histogram of distribution of trait values for Block ', trait_dstr_list[i], sep=''))
+    print(trait_hist_plots)
+  }
+}
+trait_hist(species_trait_final)
+```
