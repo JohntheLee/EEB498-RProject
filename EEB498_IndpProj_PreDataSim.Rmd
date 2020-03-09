@@ -1,0 +1,184 @@
+---
+title: "EEB498 - Independent Project - Preliminary Data Simulation"
+output:
+  pdf_document:
+    toc: false
+    number_section: true
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(FD)
+library(TPD)
+opts_chunk$set(tidy.opts=list(width.cutoff=70),tidy=TRUE)
+ksr_abundance <- read_csv('~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_T1_Abundance.csv')
+ksr_trait <- read_csv('~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv')
+```
+
+**All .csv files are provided by Leila Forsyth (Benjamin Gilbert Lab).**
+
+**Specific leaf area (SLA) will be chosen to be the functional trait of focus (chosen arbitrarily).**
+
+# Preliminary data simulation using Leila's '2018 Ontogeny' dataset
+
+## Manipulation of the dataframes to obtain usable dataframes/matrices
+
+**Had to remove observations for Asclepias_tuberosa, Cirsium_vulgare, Melilotus_albus because there are only one instances of each species.**
+
+```{r}
+ksr_abun_true_df <- ksr_abundance %>% 
+  select(-c(Plot,Size,Leonurus_cardiaca, Silene_vulgaris, Solanum_dulcamara)) %>% 
+  group_by(Block) %>% 
+  summarise_each(funs(mean)) %>% 
+  column_to_rownames(var='Block')
+
+ksr_abun_true_matrix <- data.matrix(ksr_abun_true_df)
+
+ksr_indiv_trait_df <- ksr_trait %>% 
+  select(-c(Plot_Number,Number ,Collection_Number:`Area_(cm2)`)) %>% 
+  filter(Species!='Lolium_aparine' & Species!='Silene_latifolia') %>% 
+  group_by(Block, Species) %>% 
+  mutate(Indiv = seq(1, length(Species), 1))
+
+ksr_mean_trait_true_df <- ksr_indiv_trait_df %>% 
+  group_by(Species) %>% 
+  summarise(SLA = mean(`SLA_(cm2/g)`)) %>% 
+  column_to_rownames(var='Species')
+
+REND_trait_true_df <- ksr_indiv_trait_df %>% 
+  filter(Species!='Asclepias_tuberosa' & Species!='Cirsium_vulgare' & Species!='Melilotus_albus')
+
+REND_trait_true_df <- REND_trait_true_df[order(REND_trait_true_df$Species),]
+
+REND_abun_true_df <- ksr_abun_true_df %>% 
+  select(-c(Asclepias_tuberosa, Cirsium_vulgare, Melilotus_albus))
+
+REND_abun_true_matrix <- data.matrix(REND_abun_true_df)
+```
+
+## Calculation of the "true" value of functional beta diversity indices (CWM, FDis, FRic, FEven) using Leila's '2018 Ontogeny' dataset
+
+https://www.rdocumentation.org/packages/FD/versions/1.0-12/topics/functcomp
+
+https://www.rdocumentation.org/packages/FD/versions/1.0-12/topics/fdisp
+
+https://www.rdocumentation.org/packages/TPD/versions/1.1.0/topics/REND
+
+```{r}
+# Community-weighted mean (CWM)
+
+ksr_cwm_true <- functcomp(ksr_mean_trait_true_df, ksr_abun_true_matrix)
+(ksr_cwm_true_mean <- mean(ksr_cwm_true$SLA))
+
+# Functional dispersion (FDis)
+
+ksr_fdisp_true <- fdisp(gowdis(ksr_mean_trait_true_df), ksr_abun_true_matrix)
+(ksr_fdisp_true_mean <- mean(ksr_fdisp_true$FDis))
+
+# Functional richness and Functional evenness (FRic & FEven)
+
+ksr_TPDs_true <- TPDs(species = REND_trait_true_df$Species, traits = REND_trait_true_df$`SLA_(cm2/g)`)
+
+ksr_TPDc_true <- TPDc(TPDs = ksr_TPDs_true, sampUnit = REND_abun_true_matrix)
+
+(ksr_RicEve_true <- REND(TPDc = ksr_TPDc_true))
+
+(ksr_fric_true_mean <- mean(ksr_RicEve_true$communities$FRichness))
+(ksr_feve_true_mean <- mean(ksr_RicEve_true$communities$FEvenness))
+```
+
+## Calculation of the "manipulated" value of functional beta diversity indices (CWM, FDis) using Leila's '2018 Ontogeny' dataset
+
+**Errant data treatment for this simulation was removal of 50% of the entire dataset**
+
+Inject the errant data treatment into the trait dataframe.
+
+**Cannot appropriately remove the corresponding abundances within the abundance matrix because the dataframe does not contain the SLA trait values for each individual!!!**
+
+ - not a big issue, because trait data and abundance data are decoupled
+ 
+ - could perform errant data treatments for trait data, abundance data, and for both
+
+```{r}
+set.seed(50)
+
+ksr_indiv_trait_df$`SLA_(cm2/g)`[sample(nrow(ksr_indiv_trait_df), round(nrow(ksr_indiv_trait_df)*0.5, digits=0), replace=FALSE)] <- 0
+
+ksr_mean_trait_errant_df <- ksr_indiv_trait_df %>% 
+  group_by(Species) %>% 
+  summarise(SLA = mean(`SLA_(cm2/g)`)) %>% 
+  column_to_rownames(var='Species')
+
+REND_trait_errant_df <- ksr_indiv_trait_df %>% 
+  filter(Species!='Asclepias_tuberosa' & Species!='Cirsium_vulgare' & Species!='Melilotus_albus' & Species!='Oenothera_biennis') %>% 
+  filter(`SLA_(cm2/g)`!=0)
+
+REND_trait_errant_df <- REND_trait_errant_df[order(REND_trait_errant_df$Species),]
+
+REND_abun_errant_df <- ksr_abun_true_df %>% 
+  select(-c(Asclepias_tuberosa, Cirsium_vulgare, Melilotus_albus, Oenothera_biennis, Leucanthemum_vulgare, Verbascum_thapsus))
+
+REND_abun_errant_matrix <- data.matrix(REND_abun_errant_df)
+
+# Community-weighted mean (CWM)
+
+ksr_cwm_manip <- functcomp(ksr_mean_trait_errant_df, ksr_abun_true_matrix[, row.names(ksr_mean_trait_errant_df)])
+(ksr_cwm_manip_mean <- mean(ksr_cwm_manip$SLA))
+
+# Functional dispersion (FDis)
+
+ksr_fdisp_manip <- fdisp(gowdis(ksr_mean_trait_errant_df), ksr_abun_true_matrix[, row.names(ksr_mean_trait_errant_df)])
+(ksr_fdisp_manip_mean <- mean(ksr_fdisp_manip$FDis))
+
+# Functional richness and Functional evenness (FRic & FEven)
+
+ksr_TPDs_manip <- TPDs(species = REND_trait_errant_df$Species, traits = REND_trait_errant_df$`SLA_(cm2/g)`)
+
+ksr_TPDc_manip <- TPDc(TPDs = ksr_TPDs_manip, sampUnit = REND_abun_errant_matrix)
+
+ksr_RicEve_manip <- REND(TPDc = ksr_TPDc_manip)
+
+(ksr_fric_manip_mean <- mean(ksr_RicEve_manip$communities$FRichness))
+(ksr_feve_manip_mean <- mean(ksr_RicEve_manip$communities$FEvenness))
+```
+
+## Calculation of the percent relative bias of functional beta diversity indices (CWM, FDis) under the relevant errant data treatment
+
+```{r}
+percent_relative_bias <- function(x, y){
+  return(((x - y) / y) * 100)
+}
+
+# Community-weighted mean (CWM)
+
+(prb_cwm <- percent_relative_bias(x = ksr_cwm_manip_mean, y = ksr_cwm_true_mean))
+
+# Functional dispersion (FDis)
+
+(prb_fdis <- percent_relative_bias(x = ksr_fdisp_manip_mean, y = ksr_fdisp_true_mean))
+
+# Functional richness and Functional evenness (FRic & FEven)
+
+(prb_fric <- percent_relative_bias(x = ksr_fric_manip_mean, y = ksr_fric_true_mean))
+(prb_feven <- percent_relative_bias(x = ksr_feve_manip_mean, y = ksr_feve_true_mean))
+```
+
+## Depiction of the percent relative bias of functional beta diversity indices (CWM, FDis) under the relevant errant data treatment
+
+```{r}
+treatment <- c(0, 1)
+perf_cwm <- c(0, prb_cwm)
+perf_fdis <- c(0, prb_fdis)
+perf_fric <- c(0, prb_fric)
+perf_feven <- c(0, prb_feven)
+prb_df <- data.frame(treatment, perf_cwm, perf_fdis, perf_fric, perf_feven) %>% 
+  pivot_longer(perf_cwm:perf_feven, names_to="index", values_to="prb")
+
+ggplot(prb_df, aes(treatment, prb, colour=index))+
+  geom_line(size=1.5)+
+  geom_hline(yintercept=0, linetype="dashed")+
+  scale_x_continuous(breaks=seq(0, 1, 1), labels=c("0"="Before", "1"="After"))+
+  scale_y_continuous(breaks=seq(-100, 100, 5), limits=c(-60, 10))+
+  labs(x="Errant data treatment (50% entire dataset)", y="Percent relative bias")
+```

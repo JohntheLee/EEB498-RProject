@@ -1,0 +1,592 @@
+---
+title: "EEB498 - Independent Project - Experimental Data Simulation"
+output:
+  pdf_document:
+    toc: false
+    number_section: true
+---
+
+# Loading in the packages and the relevant datasets
+
+**All 2018 .csv files are provided by Leila Forsyth (Benjamin Gilbert Lab).**
+
+**Specific leaf area (SLA) will be chosen to be the functional trait of focus (chosen arbitrarily).**
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(FD)
+library(TPD)
+library(funrar)
+library(vegan)
+library(microbenchmark)
+opts_chunk$set(tidy.opts = list(width.cutoff = 70), tidy = FALSE)
+
+# Absolute abundance dataset has been manipulated to remove Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, and Symphyothricum_latiflorium (no abundance across all plots)
+# Absolute abundance dataset has been manipulated to include only 2m plots and to assign new Plot values
+ksr_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018 2m survey.csv") %>% 
+  filter(Size == 2) %>% 
+  unite(Plot, c(Block, Plot), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot)) %>% 
+  select(-c(Size, Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, Symphyothricum_latiflorium))
+
+ksr_abun_matrix <- ksr_abundance %>% 
+  column_to_rownames(var = "Plot") %>% 
+  data.matrix
+
+# Functional trait dataset has been manipulated to remove Lolium aparine and Silene latifolia species (no abundance values)
+# Functional dataset has been manipulated to assign new Plot values and to summarise SLA trait values for each species per plot
+ksr_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv") %>% 
+  filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
+  unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot)) %>% 
+  select(-c(Number : `Area_.cm2.`)) %>% 
+  group_by(Plot, Species) %>%
+  summarise(SLA = mean(`SLA_.cm2.g.`))
+
+# Datasets have been summarised (no separation by plots)
+ksr_abun_sum <- ksr_abundance %>% 
+  column_to_rownames(var = "Plot") %>% 
+  select(rownames(ksr_trait %>% 
+    group_by(Species) %>% 
+    summarise(SLA = mean(SLA)) %>% 
+    column_to_rownames(var='Species'))) %>% 
+  data.matrix()
+
+ksr_trait_sum <- ksr_trait %>% 
+  group_by(Species) %>% 
+  summarise(SLA = mean(SLA)) %>% 
+  filter(Species %in% colnames(ksr_abun_sum)) %>% 
+  column_to_rownames(var='Species') %>% 
+  data.matrix()
+
+# REND datasets
+ksr_REND_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv") %>% 
+  filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
+  unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot)) %>% 
+  select(-c(Number : `Area_.cm2.`)) %>% 
+  filter(Species!='Asclepias_tuberosa' & Species!='Cirsium_vulgare' & Species!='Melilotus_albus')
+
+ksr_REND_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018 2m survey.csv") %>% 
+  filter(Size == 2) %>% 
+  unite(Plot, c(Block, Plot), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot)) %>% 
+  select(-c(Size, Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, Symphyothricum_latiflorium)) %>% 
+  column_to_rownames(var='Plot') %>% 
+  select(one_of(unique(ksr_REND_trait$Species)))
+```
+
+# To-do list
+
+Height may be the best indicator trait (closest tie to observation of abundance)
+ - look at Leaf Weight data within the same datasets
+ - to look at a more skewed trait value distribution
+
+Produce trait distribution plots
+ - SLA
+ - leaf weight
+
+Look at other distributions
+ - binomial distribution
+   - have it by individual, not by species
+ - negative binomial distribution (later consideration)
+  - dispersion factor (size = 0.5 or 1)
+
+# Concerns
+
+Why Poisson distribution? Isn't the main assumption of the Poisson distribution that the occurences are independent of each other? Can we truly say that about plant community species composition?
+ - the observations in this scenario is not the possibility of an individual plant growing in the area but of the possibility of a researcher observing that plant that has grown in the area
+
+Should we inject the errant data treatments into the trait dataframe? The same assumption of observation and experimental errors that we hold for abundance can also hold for trait.
+
+# Calculating the true functional beta diversity index values
+
+Calculate the true functional beta diversity index values for each plot per block. Obtain 14 (blocks) x 4 (plots) = 56 values.
+
+This shows natural variation and is more informational.
+
+Would there be a problem of independence? Currently, independence is violated because every block possesses a cluster of four plots, and there is a high degree of connection (ie. dependence) within each cluster of plots.
+
+## Community-weighted mean (CWM)
+
+*For loops are sequenced along specific Plot numbers in the trait dataset, because the trait dataset only has functional trait values for only certain plots.*
+
+Note that R Documentation for the functcomp function describes its calculation as being "the mean trait value of all species present in the community, weighted by their relative abundances".
+
+```{r}
+# Function to create a dataframe of all CWM values of each plot
+# Function allows functcomp to calculate a CWM value of each plot using the respective trait dataframe and abundance matrix
+cwm_value_func <- function(trait_df, abun_df){
+  list_cwm <- list()
+  plot_list <- unique(trait_df$Plot)
+  for(i in seq_along(plot_list)){
+    cwm_trait <- trait_df %>% 
+      filter(Plot == plot_list[i]) %>% 
+      column_to_rownames(var = "Species")
+    cwm_abun <- abun_df %>% 
+      filter(Plot == plot_list[i]) %>% 
+      column_to_rownames(var = "Plot") %>% 
+      select(one_of(rownames(cwm_trait))) %>%
+      data.matrix()
+    cwm_value <- functcomp(x = cwm_trait, a = cwm_abun)
+    list_cwm[[i]] <- cwm_value
+  }
+  return(data.frame(plot_list, bind_rows(list_cwm)$SLA) %>% 
+    rename("Plot" = "plot_list", "CWM" = "bind_rows.list_cwm..SLA"))
+}
+
+cwm_value_func(trait_df = ksr_trait, abun_df = ksr_abundance)
+```
+
+### Matrix multiplication method (CWM)
+
+```{r}
+# Function to create a dataframe of all CWM values of each plot
+# Function utilizes matrix multiplication to calculate a CWM value of each plot using the respective trait matrix and abundance matrix
+cwm_value_mm_func <- function(trait_df, abun_df){
+  list_cwm <- list()
+  cwm_list <- unique(trait_df$Plot)
+  for(i in seq_along(cwm_list)){
+    trait_matrix <- trait_df %>% 
+      filter(Plot == cwm_list[i]) %>% 
+      column_to_rownames(var = "Species") %>% 
+      select(SLA) %>% 
+      data.matrix()
+    abun_matrix <- abun_df %>% 
+      filter(Plot == cwm_list[i]) %>% 
+      column_to_rownames(var = "Plot") %>% 
+      select(one_of(rownames(trait_matrix))) %>%
+      data.matrix() %>% 
+      make_relative()
+    cwm_value <- abun_matrix %*% trait_matrix
+    list_cwm[[i]] <- cwm_value[]
+  }
+  return(data.frame(cwm_list, unlist(list_cwm)) %>% 
+    rename("Plot" = "cwm_list", "CWM" = "unlist.list_cwm."))
+}
+
+cwm_value_mm_func(trait_df = ksr_trait, abun_df = ksr_abundance)
+```
+
+### Microbenchmark (CWM)
+
+Microbenchmark function is used to compare the runtimes of both methods of CWM calculation. Both CWM functions produce the same CWM dataframe. The optimized function is slightly more efficient in terms of code execution time and code length.
+
+```{r}
+# cwm_mbm <- microbenchmark(
+#   cwm_value_func(trait_df = ksr_trait, abun_df = ksr_abundance),
+#   cwm_value_mm_func(trait_df = ksr_trait, abun_df = ksr_abundance))
+
+cwm_mbm_sec <- cwm_mbm %>% 
+  mutate(time = time/1000000000)
+
+ggplot(data = cwm_mbm_sec, aes(x = expr, y = time))+
+  geom_boxplot()+
+  scale_x_discrete(labels = c("Optimized", "Matrix Multiplication"))+
+  scale_y_continuous(breaks = seq(0, 4, 0.1), limits = c(0.1, 1.2), trans = "log10")+
+  labs(x = "Expression", y = "Time (seconds) (Log10)")+
+  theme_classic()
+```
+
+## Functional dispersion (FDis)
+
+*For loops are sequenced along specific Plot numbers in the trait dataset, because the trait dataset only has functional trait values for only certain plots.*
+
+*Deprecated*
+
+```{r}
+# Function to create an absolute abundance matrix for each plot
+fdis_abun_func <- function(df){
+  list_matrix <- list()
+  abun_list <- unique(ksr_trait$Plot)
+  for(i in seq_along(abun_list)){
+    plot_matrix <- df %>% 
+      filter(Plot == abun_list[i]) %>% 
+      column_to_rownames(var = "Plot")
+    list_matrix[[i]] <- plot_matrix
+  }
+  list_matrix <- Reduce(f = rbind, x = list_matrix) %>% 
+      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
+      data.matrix() %>%
+      asplit(1)
+  return(list_matrix)
+}
+
+# Function to create a functional trait dataframe for each plot
+fdis_trait_func <- function(df){
+  list_df <- list()
+  trait_list <- unique(ksr_trait$Plot)
+  for(i in seq_along(trait_list)){
+    plot_df <- df %>% 
+      filter(Plot == trait_list[i]) %>% 
+      column_to_rownames(var = "Species")
+    list_df[[i]] <- plot_df
+  }
+  return(list_df)
+}
+
+# Function to create a dataframe of all FDis values of each plot
+# Function allows fdisp to calculate a FDis value of each plot using the respective trait dataframe and abundance matrix
+fdis_value_func <- function(trait_df, abun_df){
+  list_fdis <- list()
+  fdis_list <- unique(ksr_trait$Plot)
+  for(i in seq_along(fdis_list)){
+    plot_abun_matrix <- fdis_abun_func(df = abun_df)[[i]] %>% 
+      t() %>% 
+      data.frame() %>% 
+      select(one_of(rownames(fdis_trait_func(df = trait_df)[[i]]))) %>% 
+      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
+      data.matrix()
+    plot_trait_df <- fdis_trait_func(df = trait_df)[[i]] %>% 
+      rownames_to_column(var = "Species") %>% 
+      filter(Species %in% names(plot_abun_matrix %>% data.frame())) %>% 
+      column_to_rownames(var = "Species") %>% 
+      select(SLA)
+    fdis_value <- fdisp(gowdis(plot_trait_df), plot_abun_matrix)
+    list_fdis[[i]] <- fdis_value$FDis
+  }
+  return(data.frame(unique(ksr_trait$Plot), unlist(list_fdis)) %>% 
+           rename("Plot" = "unique.ksr_trait.Plot.", "FDis" = "unlist.list_fdis."))
+}
+
+fdis_value_func(trait_df = ksr_trait, abun_df = ksr_abundance)
+```
+
+FDis calculation using the entire community species pool:
+
+```{r}
+fdis_value_func <- function(trait_df, abun_matrix){
+  fdis_value_list <- fdisp(gowdis(trait_df), abun_matrix)
+  fdis_value_df <- data.frame(rownames(abun_matrix), unname(fdis_value_list$FDis)) %>% 
+    rename("Plot" = "rownames.abun_matrix.", "FDis" = "unname.fdis_value_list.FDis.")
+  fdis_value_df$Plot <- as.numeric(levels(fdis_value_df$Plot)[fdis_value_df$Plot])
+  return(fdis_value_df)
+}
+
+fdis_value_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum)
+```
+
+## Functional richness (FRic) and Functional evenness (FEve)
+
+*Observations for Asclepias_tuberosa, Cirsium_vulgare, and Melilotus_albus are removed, because there is only one instance of each species.*
+
+Note that R Documentation for the REND function describes its calculation as being "based on the TPDc of the considered communities; therefore results are independent of any underlying feature of the species that compose the communities".
+
+```{r}
+fric_value_func <- function(trait_df, abun_matrix){
+  fric_value_list <- REND(TPDc = TPDc(TPDs = TPDs(species = trait_df$Species, traits = trait_df$`SLA_.cm2.g.`), sampUnit = abun_matrix))
+  fric_value_df <- data.frame(rownames(abun_matrix), unname(fric_value_list$communities$FRichness)) %>% 
+    rename("Plot" = "rownames.abun_matrix.", "FRic" = "unname.fric_value_list.communities.FRichness.")
+  fric_value_df$Plot <- as.numeric(levels(fric_value_df$Plot)[fric_value_df$Plot])
+  return(fric_value_df)
+}
+
+fric_value_func(trait_df = ksr_REND_trait, abun_matrix = ksr_REND_abundance)
+
+feve_value_func <- function(trait_df, abun_matrix){
+  feve_value_list <- REND(TPDc = TPDc(TPDs = TPDs(species = trait_df$Species, traits = trait_df$`SLA_.cm2.g.`), sampUnit = abun_matrix))
+  feve_value_df <- data.frame(rownames(abun_matrix), unname(feve_value_list$communities$FEvenness)) %>% 
+    rename("Plot" = "rownames.abun_matrix.", "FEve" = "unname.feve_value_list.communities.FEvenness.")
+  feve_value_df$Plot <- as.numeric(levels(feve_value_df$Plot)[feve_value_df$Plot])
+  return(feve_value_df)
+}
+
+feve_value_func(trait_df = ksr_REND_trait, abun_matrix = ksr_REND_abundance)
+```
+
+## Shannon diversity
+
+```{r}
+shannon_value_func <- function(abun_df){
+  shannon_value_list <- diversity(abun_df, index = "shannon", MARGIN = 1, base = exp(1))
+  shannon_value_df <- data.frame(abun_df$Plot, shannon_value_list) %>% 
+    rename("Plot" = "abun_df.Plot", "Shannon" = "shannon_value_list")
+  return(shannon_value_df)
+}
+
+shannon_value_func(abun_df = ksr_abundance)
+```
+
+# Creating the errant data treatments within the abundance dataframes
+
+Errant data treatment will be a spectrum with a Poisson distribution at one end and a negative binomial distribution at the other end. This errant data treatment will be injected into the abundance dataframes.
+
+The following function utilizes the rpois function to create an abundance distribution for each plot. The lambda for the Poisson distribution is the original abundance (vector) for each plot.
+
+```{r}
+poisson_abun_func <- function(abun_matrix){
+  list_poisson_abun_plot <- list()
+  plot_list <- rownames(abun_matrix)
+  for(i in seq_along(plot_list)){
+    poisson_abun_plot <- rpois(n = ncol(abun_matrix), lambda = abun_matrix[i, ])
+    list_poisson_abun_plot[[i]] <- poisson_abun_plot
+  }
+  return(data.frame(matrix(unlist(list_poisson_abun_plot), nrow = length(list_poisson_abun_plot), byrow = T)) %>% 
+    rename_all(funs(quo(colnames(abun_matrix)))) %>% 
+    cbind(rownames(abun_matrix), .) %>% 
+    rename("Plot" = "rownames(abun_matrix)"))
+}
+```
+
+## Community-weighted mean (CWM)
+
+*Functional diversity index values are calculated using errant abundance dataframes and the original trait dataframe. Mean errant CWM is provided at the end of the dataframe.*
+
+Rough estimates of execution time:
+
+ - 10 simulations: ~5sec
+ - 100 simulations: ~1min
+ - 1000 simulations: ~5min
+ - 10000 simulations: ~30min
+
+```{r}
+set.seed(2501)
+
+cwm_true_errant_df_function <- function(trait_df, abun_df, abun_matrix, n){
+  true_cwm <- cwm_value_func(trait_df = trait_df, abun_df = abun_df)
+  list_errant_cwm <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_cwm <- cwm_value_func(trait_df = trait_df, abun_df = poisson_abun_func(abun_matrix = abun_matrix)) %>% select(CWM)
+    list_errant_cwm[[i]] <- errant_cwm
+  }
+  errant_df <- map_dfc(list_errant_cwm, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_CWM", n))
+  full_df <- errant_df %>% 
+    cbind(true_cwm, .) %>% 
+    rename("True_CWM" = CWM) %>% 
+    mutate(Mean_Errant_CWM = apply(.[, -c(1, 2)], 1, mean), SD_Errant_CWM = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+cwm_true_errant_df <- cwm_true_errant_df_function(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 100)
+```
+
+### Matrix multiplication (CWM)
+
+```{r}
+set.seed(2501)
+
+cwm_true_errant_df_mm_function <- function(trait_df, abun_df, abun_matrix, n){
+  true_cwm <- cwm_value_mm_func(trait_df = trait_df, abun_df = abun_df)
+  list_errant_cwm <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_cwm <- cwm_value_mm_func(trait_df = trait_df, abun_df = poisson_abun_func(abun_matrix = abun_matrix)) %>% select(CWM)
+    list_errant_cwm[[i]] <- errant_cwm
+  }
+  errant_df <- map_dfc(list_errant_cwm, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_CWM", n))
+  full_df <- errant_df %>% 
+    cbind(true_cwm, .) %>% 
+    rename("True_CWM" = CWM) %>% 
+    mutate(Mean_Errant_CWM = apply(.[, -c(1, 2)], 1, mean), SD_Errant_CWM = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+```
+
+### Visualization (CWM - True vs Errant)
+
+```{r}
+ggplot(data = cwm_true_errant_df, aes(x = True_CWM, y = Mean_Errant_CWM))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_CWM - SD_Errant_CWM, ymax = Mean_Errant_CWM + SD_Errant_CWM))+
+  geom_abline(slope = 1)+
+  labs(x = "True CWM", y = "Mean Errant CWM")
+```
+
+### Microbenchmark (CWM)
+
+Microbenchmark function is used to compare the runtimes of both methods of CWM calculation. Both CWM functions produce the same CWM dataframe. The optimized function is slightly more efficient in terms of code execution time and code length.
+
+```{r}
+# cwm_true_errant_mbm <- microbenchmark(
+#   cwm_true_errant_df_function(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 10),
+#   cwm_true_errant_df_mm_function(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 10))
+
+cwm_true_errant_mbm_sec <- cwm_true_errant_mbm %>% 
+  mutate(time = time/1000000000)
+
+ggplot(data = cwm_true_errant_mbm_sec, aes(x = expr, y = time))+
+  geom_boxplot()+
+  scale_x_discrete(labels = c("Optimized", "Matrix Multiplication"))+
+  scale_y_continuous(breaks = seq(0, 6, 0.2), limits = c(2, 5.8), trans = "log10")+
+  labs(x = "Expression", y = "Time (seconds) (Log10)")+
+  theme_classic()
+```
+
+## Functional dispersion (FDis)
+
+```{r}
+set.seed(2501)
+
+fdis_true_errant_df_function <- function(trait_df, abun_matrix, n){
+  true_fdis <- fdis_value_func(trait_df = trait_df, abun_matrix = abun_matrix)
+  list_errant_fdis <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_abun <- poisson_abun_func(abun_matrix = abun_matrix) %>% 
+      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
+      column_to_rownames(var='Plot') %>% 
+      data.matrix()
+    errant_trait <- trait_df %>% 
+      data.frame() %>% 
+      rownames_to_column(var = "Species") %>% 
+      filter(Species %in% names(errant_abun %>% data.frame())) %>% 
+      column_to_rownames(var = "Species")
+    errant_fdis <- fdis_value_func(trait_df = errant_trait, abun_matrix = errant_abun) %>% 
+      select(FDis)
+    list_errant_fdis[[i]] <- errant_fdis
+  }
+  errant_df <- map_dfc(list_errant_fdis, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FDis", n))
+  full_df <- errant_df %>% 
+    cbind(true_fdis, .) %>% 
+    rename("True_FDis" = FDis) %>% 
+    mutate(Mean_Errant_FDis = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FDis = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+fdis_true_errant_df <- fdis_true_errant_df_function(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, n = 100)
+```
+
+### Visualization (FDis - True vs Errant)
+
+```{r}
+ggplot(data = fdis_true_errant_df, aes(x = True_FDis, y = Mean_Errant_FDis))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FDis - SD_Errant_FDis, ymax = Mean_Errant_FDis + SD_Errant_FDis))+
+  geom_abline(slope = 1)+
+  labs(x = "True FDis", y = "Mean Errant FDis")
+```
+
+## Functional richness (FRic)
+
+```{r message=FALSE}
+set.seed(2501)
+
+fric_true_errant_df_function <- function(trait_df, abun_df, n){
+  true_fric <- fric_value_func(trait_df = trait_df, abun_matrix = abun_df)
+  list_errant_fric <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_fric <- fric_value_func(trait_df = trait_df, abun_matrix = poisson_abun_func(abun_matrix = abun_df %>% data.matrix) %>% 
+                                     column_to_rownames(var='Plot')) %>% 
+      select(FRic)
+    list_errant_fric[[i]] <- errant_fric
+  }
+  errant_df <- map_dfc(list_errant_fric, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FRic", n))
+  full_df <- errant_df %>% 
+    cbind(true_fric, .) %>% 
+    rename("True_FRic" = FRic) %>% 
+    mutate(Mean_Errant_FRic = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FRic = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+fric_true_errant_df <- fric_true_errant_df_function(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
+```
+
+### Visualization (FRic - True vs Errant)
+
+```{r}
+ggplot(data = fric_true_errant_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FRic - SD_Errant_FRic, ymax = Mean_Errant_FRic + SD_Errant_FRic))+
+  geom_abline(slope = 1)+
+  labs(x = "True FRic", y = "Mean Errant FRic")
+```
+
+## Functional evenness (FEve)
+
+```{r message=FALSE}
+set.seed(2501)
+
+feve_true_errant_df_function <- function(trait_df, abun_df, n){
+  true_feve <- feve_value_func(trait_df = trait_df, abun_matrix = abun_df)
+  list_errant_feve <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_feve <- feve_value_func(trait_df = trait_df, abun_matrix = poisson_abun_func(abun_matrix = abun_df %>% data.matrix) %>% 
+                                     column_to_rownames(var='Plot')) %>% 
+      select(FEve)
+    list_errant_feve[[i]] <- errant_feve
+  }
+  errant_df <- map_dfc(list_errant_feve, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FEve", n))
+  full_df <- errant_df %>% 
+    cbind(true_feve, .) %>% 
+    rename("True_FEve" = FEve) %>% 
+    mutate(Mean_Errant_FEve = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FEve = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+feve_true_errant_df <- feve_true_errant_df_function(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
+```
+
+### Visualization (FEve - True vs Errant)
+
+```{r}
+ggplot(data = feve_true_errant_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FEve - SD_Errant_FEve, ymax = Mean_Errant_FEve + SD_Errant_FEve))+
+  geom_abline(slope = 1)+
+  labs(x = "True FEve", y = "Mean Errant FEve")
+```
+
+## Shannon diversity
+
+```{r}
+set.seed(2501)
+
+shannon_true_errant_df_function <- function(abun_df, n){
+  true_shannon <- shannon_value_func(abun_df = abun_df)
+  list_errant_shannon <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_abun <- poisson_abun_func(abun_matrix = abun_df %>% column_to_rownames(var='Plot') %>% data.matrix) %>% data.frame()
+    errant_abun$Plot <- as.numeric(levels(errant_abun$Plot)[errant_abun$Plot])
+    errant_shannon <- shannon_value_func(abun_df = errant_abun) %>% select(Shannon)
+    list_errant_shannon[[i]] <- errant_shannon
+  }
+  errant_df <- map_dfc(list_errant_shannon, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_Shannon", n))
+  full_df <- errant_df %>% 
+    cbind(true_shannon, .) %>% 
+    rename("True_Shannon" = Shannon) %>% 
+    mutate(Mean_Errant_Shannon = apply(.[, -c(1, 2)], 1, mean), SD_Errant_Shannon = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+shannon_true_errant_df <- shannon_true_errant_df_function(abun_df = ksr_abundance, n = 100)
+```
+
+### Visualization (Shannon - True vs Errant)
+
+```{r}
+ggplot(data = shannon_true_errant_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_Shannon - SD_Errant_Shannon, ymax = Mean_Errant_Shannon + SD_Errant_Shannon))+
+  geom_abline(slope = 1)+
+  labs(x = "True Shannon", y = "Mean Errant Shannon")
+```
+
+# Binomial distribution
+
+rbinom(n = nrow(species column), size = vector of true/original abundances, prob = 0.8 or 0.9)
+
+```{r}
+rbinom(n = 120, size = 10, )
+```
+
+```{r}
+test_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv")
+
+ggplot(data = test_trait, aes(x = `Weight_(g)`))+
+  geom_histogram()
+
+ggplot(data = test_trait, aes(x = `SLA_(cm2/g)`))+
+  geom_histogram()
+```
+
