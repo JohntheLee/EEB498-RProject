@@ -75,21 +75,16 @@ ksr_REND_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj
   select(-c(Size, Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, Symphyothricum_latiflorium)) %>% 
   column_to_rownames(var='Plot') %>% 
   select(one_of(unique(ksr_REND_trait$Species)))
+
+# Full trait dataset with only plot transformation
+ksr_trait_full <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
+  unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot))
 ```
 
 # To-do list
 
-Height may be the best indicator trait (closest tie to observation of abundance)
- - look at Leaf Weight data within the same datasets
- - to look at a more skewed trait value distribution
-
-Produce trait distribution plots
- - SLA
- - leaf weight
-
 Look at other distributions
- - binomial distribution
-   - have it by individual, not by species
  - negative binomial distribution (later consideration)
   - dispersion factor (size = 0.5 or 1)
 
@@ -574,19 +569,96 @@ ggplot(data = shannon_true_errant_df, aes(x = True_Shannon, y = Mean_Errant_Shan
 
 # Binomial distribution
 
+ - binomial distribution
+   - have it by individual, not by species
+
 rbinom(n = nrow(species column), size = vector of true/original abundances, prob = 0.8 or 0.9)
 
 ```{r}
 rbinom(n = 120, size = 10, )
 ```
 
+# Functional trait distributions
+
+Below are the functional trait density distributions for SLA and leaf weight. Density distribution plots show that the leaf weight distribution is far more positive-skewed than the SLA distribution. Blocking has been done by species and by plot, with no new revelations produced by either blocking method.
+
+## SLA
+
 ```{r}
-test_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv")
 
-ggplot(data = test_trait, aes(x = `Weight_(g)`))+
-  geom_histogram()
+# No blocking
+ggplot(data = ksr_trait_full, aes(x = `SLA_.cm2.g.`))+
+  geom_density()+
+  scale_y_continuous(limits = c(0, 0.006), breaks = seq(0, 1, 0.001))+
+  theme_bw()+
+  labs(x = "SLA", y = "Density", title = "Density distribution of SLA values for all species across all plots")
 
-ggplot(data = test_trait, aes(x = `SLA_(cm2/g)`))+
-  geom_histogram()
+# Blocking by species
+density_sla_species <- function(df){
+  species_list <- unique(ksr_trait_full$Species)
+  for(i in seq_along(species_list)){
+    density_plots <- ggplot(df %>% filter(Species == species_list[i]), aes(x = `SLA_.cm2.g.`))+
+      geom_density()+
+      labs(x = "SLA", y = "Density")+
+      ggtitle(paste("Density distribution of SLA values for ", species_list[i], " across all plots", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_sla_species(ksr_trait_full)
+
+# Blocking by plot
+density_sla_plot <- function(df){
+  plot_list <- unique(sort(ksr_trait_full$Plot))
+  for(i in seq_along(plot_list)){
+    density_plots <- ggplot(df %>% filter(Plot == plot_list[i]), aes(x = `SLA_.cm2.g.`))+
+      geom_density()+
+      labs(x = "SLA", y = "Density")+
+      ggtitle(paste("Density distribution of SLA values for plot ", plot_list[i], " across all species", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_sla_plot(ksr_trait_full)
+```
+
+## Leaf Weight
+
+```{r}
+
+# No blocking
+ggplot(data = ksr_trait_full, aes(x = `Weight_.g.`))+
+  geom_density()+
+  scale_y_continuous(limits = c(0, 14), breaks = seq(0, 14, 2))+
+  theme_bw()+
+  labs(x = "Leaf Weight", y = "Density", title = "Density distribution of Leaf Weight values for all species across all plots")
+
+# Blocking by species
+density_lw_species <- function(df){
+  species_list <- unique(ksr_trait_full$Species)
+  for(i in seq_along(species_list)){
+    density_plots <- ggplot(df %>% filter(Species == species_list[i]), aes(x = `Weight_.g.`))+
+      geom_density()+
+      labs(x = "Leaf Weight", y = "Density")+
+      ggtitle(paste("Density distribution of Leaf Weight values for ", species_list[i], " across all plots", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_lw_species(ksr_trait_full)
+
+# Blocking by plot
+density_lw_plot <- function(df){
+  plot_list <- unique(sort(ksr_trait_full$Plot))
+  for(i in seq_along(plot_list)){
+    density_plots <- ggplot(df %>% filter(Plot == plot_list[i]), aes(x = `Weight_.g.`))+
+      geom_density()+
+      labs(x = "Leaf Weight", y = "Density")+
+      ggtitle(paste("Density distribution of Leaf Weight values for plot ", plot_list[i], " across all species", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_lw_plot(ksr_trait_full)
 ```
 
