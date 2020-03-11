@@ -95,6 +95,8 @@ Why Poisson distribution? Isn't the main assumption of the Poisson distribution 
 
 Should we inject the errant data treatments into the trait dataframe? The same assumption of observation and experimental errors that we hold for abundance can also hold for trait.
 
+**Rpois is by plot, but rbinom is by species.**
+
 # Calculating the true functional beta diversity index values
 
 Calculate the true functional beta diversity index values for each plot per block. Obtain 14 (blocks) x 4 (plots) = 56 values.
@@ -305,7 +307,7 @@ shannon_value_func(abun_df = ksr_abundance)
 
 # Creating the errant data treatments within the abundance dataframes
 
-Errant data treatment will be a spectrum with a Poisson distribution at one end and a negative binomial distribution at the other end. This errant data treatment will be injected into the abundance dataframes.
+Errant data treatment will be a spectrum with a Poisson distribution at one end and a binomial distribution at the other end. This errant data treatment will be injected into the abundance dataframes.
 
 The following function utilizes the rpois function to create an abundance distribution for each plot. The lambda for the Poisson distribution is the original abundance (vector) for each plot.
 
@@ -318,6 +320,23 @@ poisson_abun_func <- function(abun_matrix){
     list_poisson_abun_plot[[i]] <- poisson_abun_plot
   }
   return(data.frame(matrix(unlist(list_poisson_abun_plot), nrow = length(list_poisson_abun_plot), byrow = T)) %>% 
+    rename_all(funs(quo(colnames(abun_matrix)))) %>% 
+    cbind(rownames(abun_matrix), .) %>% 
+    rename("Plot" = "rownames(abun_matrix)"))
+}
+```
+
+The following function utilizes the rbinom function to create an abundance distribution for each species. The size for the binomial distribution is the original abundance (vector) for each species.
+
+```{r}
+binom_abun_func <- function(abun_matrix){
+  list_binom_abun_plot <- list()
+  species_list <- as.numeric(factor(colnames(ksr_abun_matrix)))
+  for(i in seq_along(species_list)){
+    binom_abun_plot <- rbinom(n = nrow(abun_matrix), size = abun_matrix[ , i], prob = 0.8)
+    list_binom_abun_plot[[i]] <- binom_abun_plot
+  }
+  return(data.frame((list_binom_abun_plot)) %>% 
     rename_all(funs(quo(colnames(abun_matrix)))) %>% 
     cbind(rownames(abun_matrix), .) %>% 
     rename("Plot" = "rownames(abun_matrix)"))
@@ -565,17 +584,6 @@ ggplot(data = shannon_true_errant_df, aes(x = True_Shannon, y = Mean_Errant_Shan
   geom_errorbar(aes(ymin = Mean_Errant_Shannon - SD_Errant_Shannon, ymax = Mean_Errant_Shannon + SD_Errant_Shannon))+
   geom_abline(slope = 1)+
   labs(x = "True Shannon", y = "Mean Errant Shannon")
-```
-
-# Binomial distribution
-
- - binomial distribution
-   - have it by individual, not by species
-
-rbinom(n = nrow(species column), size = vector of true/original abundances, prob = 0.8 or 0.9)
-
-```{r}
-rbinom(n = 120, size = 10, )
 ```
 
 # Functional trait distributions
