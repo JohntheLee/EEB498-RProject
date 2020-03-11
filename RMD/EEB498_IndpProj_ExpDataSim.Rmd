@@ -75,21 +75,16 @@ ksr_REND_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj
   select(-c(Size, Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, Symphyothricum_latiflorium)) %>% 
   column_to_rownames(var='Plot') %>% 
   select(one_of(unique(ksr_REND_trait$Species)))
+
+# Full trait dataset with only plot transformation
+ksr_trait_full <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
+  unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot))
 ```
 
 # To-do list
 
-Height may be the best indicator trait (closest tie to observation of abundance)
- - look at Leaf Weight data within the same datasets
- - to look at a more skewed trait value distribution
-
-Produce trait distribution plots
- - SLA
- - leaf weight
-
 Look at other distributions
- - binomial distribution
-   - have it by individual, not by species
  - negative binomial distribution (later consideration)
   - dispersion factor (size = 0.5 or 1)
 
@@ -99,6 +94,8 @@ Why Poisson distribution? Isn't the main assumption of the Poisson distribution 
  - the observations in this scenario is not the possibility of an individual plant growing in the area but of the possibility of a researcher observing that plant that has grown in the area
 
 Should we inject the errant data treatments into the trait dataframe? The same assumption of observation and experimental errors that we hold for abundance can also hold for trait.
+
+**Rpois is by plot, but rbinom is by species.**
 
 # Calculating the true functional beta diversity index values
 
@@ -310,7 +307,7 @@ shannon_value_func(abun_df = ksr_abundance)
 
 # Creating the errant data treatments within the abundance dataframes
 
-Errant data treatment will be a spectrum with a Poisson distribution at one end and a negative binomial distribution at the other end. This errant data treatment will be injected into the abundance dataframes.
+Errant data treatment will be a spectrum with a Poisson distribution at one end and a binomial distribution at the other end. This errant data treatment will be injected into the abundance dataframes.
 
 The following function utilizes the rpois function to create an abundance distribution for each plot. The lambda for the Poisson distribution is the original abundance (vector) for each plot.
 
@@ -323,6 +320,23 @@ poisson_abun_func <- function(abun_matrix){
     list_poisson_abun_plot[[i]] <- poisson_abun_plot
   }
   return(data.frame(matrix(unlist(list_poisson_abun_plot), nrow = length(list_poisson_abun_plot), byrow = T)) %>% 
+    rename_all(funs(quo(colnames(abun_matrix)))) %>% 
+    cbind(rownames(abun_matrix), .) %>% 
+    rename("Plot" = "rownames(abun_matrix)"))
+}
+```
+
+The following function utilizes the rbinom function to create an abundance distribution for each species. The size for the binomial distribution is the original abundance (vector) for each species.
+
+```{r}
+binom_abun_func <- function(abun_matrix){
+  list_binom_abun_plot <- list()
+  species_list <- as.numeric(factor(colnames(abun_matrix)))
+  for(i in seq_along(species_list)){
+    binom_abun_plot <- rbinom(n = nrow(abun_matrix), size = abun_matrix[ , i], prob = 0.8)
+    list_binom_abun_plot[[i]] <- binom_abun_plot
+  }
+  return(data.frame((list_binom_abun_plot)) %>% 
     rename_all(funs(quo(colnames(abun_matrix)))) %>% 
     cbind(rownames(abun_matrix), .) %>% 
     rename("Plot" = "rownames(abun_matrix)"))
@@ -343,7 +357,8 @@ Rough estimates of execution time:
 ```{r}
 set.seed(2501)
 
-cwm_true_errant_df_function <- function(trait_df, abun_df, abun_matrix, n){
+# Errant Poisson distribution
+cwm_exp_pois_df_func <- function(trait_df, abun_df, abun_matrix, n){
   true_cwm <- cwm_value_func(trait_df = trait_df, abun_df = abun_df)
   list_errant_cwm <- list()
   repeat_list <- c(1:n)
@@ -360,7 +375,27 @@ cwm_true_errant_df_function <- function(trait_df, abun_df, abun_matrix, n){
   return(full_df)
 }
 
-cwm_true_errant_df <- cwm_true_errant_df_function(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 100)
+cwm_exp_pois_df <- cwm_exp_pois_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 100)
+
+# Errant binomial distribution
+cwm_exp_binom_df_func <- function(trait_df, abun_df, abun_matrix, n){
+  true_cwm <- cwm_value_func(trait_df = trait_df, abun_df = abun_df)
+  list_errant_cwm <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_cwm <- cwm_value_func(trait_df = trait_df, abun_df = binom_abun_func(abun_matrix = abun_matrix)) %>% select(CWM)
+    list_errant_cwm[[i]] <- errant_cwm
+  }
+  errant_df <- map_dfc(list_errant_cwm, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_CWM", n))
+  full_df <- errant_df %>% 
+    cbind(true_cwm, .) %>% 
+    rename("True_CWM" = CWM) %>% 
+    mutate(Mean_Errant_CWM = apply(.[, -c(1, 2)], 1, mean), SD_Errant_CWM = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+cwm_exp_binom_df <- cwm_exp_binom_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 100)
 ```
 
 ### Matrix multiplication (CWM)
@@ -368,7 +403,7 @@ cwm_true_errant_df <- cwm_true_errant_df_function(trait_df = ksr_trait, abun_df 
 ```{r}
 set.seed(2501)
 
-cwm_true_errant_df_mm_function <- function(trait_df, abun_df, abun_matrix, n){
+cwm_exp_mm_df_func <- function(trait_df, abun_df, abun_matrix, n){
   true_cwm <- cwm_value_mm_func(trait_df = trait_df, abun_df = abun_df)
   list_errant_cwm <- list()
   repeat_list <- c(1:n)
@@ -389,11 +424,19 @@ cwm_true_errant_df_mm_function <- function(trait_df, abun_df, abun_matrix, n){
 ### Visualization (CWM - True vs Errant)
 
 ```{r}
-ggplot(data = cwm_true_errant_df, aes(x = True_CWM, y = Mean_Errant_CWM))+
+ggplot(data = cwm_exp_pois_df, aes(x = True_CWM, y = Mean_Errant_CWM))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_CWM - SD_Errant_CWM, ymax = Mean_Errant_CWM + SD_Errant_CWM))+
   geom_abline(slope = 1)+
-  labs(x = "True CWM", y = "Mean Errant CWM")
+  labs(x = "True CWM", y = "Mean Errant CWM", title = "Scatterplot of true CWM values against errant CWM values
+       constructed by random Poisson distributions")
+
+ggplot(data = cwm_exp_binom_df, aes(x = True_CWM, y = Mean_Errant_CWM))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_CWM - SD_Errant_CWM, ymax = Mean_Errant_CWM + SD_Errant_CWM))+
+  geom_abline(slope = 1)+
+  labs(x = "True CWM", y = "Mean Errant CWM", title = "Scatterplot of true CWM values against errant CWM values
+       constructed by random binomial distributions (prob = 0.8)")
 ```
 
 ### Microbenchmark (CWM)
@@ -401,14 +444,14 @@ ggplot(data = cwm_true_errant_df, aes(x = True_CWM, y = Mean_Errant_CWM))+
 Microbenchmark function is used to compare the runtimes of both methods of CWM calculation. Both CWM functions produce the same CWM dataframe. The optimized function is slightly more efficient in terms of code execution time and code length.
 
 ```{r}
-# cwm_true_errant_mbm <- microbenchmark(
-#   cwm_true_errant_df_function(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 10),
-#   cwm_true_errant_df_mm_function(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 10))
+# cwm_exp_mbm <- microbenchmark(
+#   cwm_exp_pois_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 10),
+#   cwm_exp_mm_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, n = 10))
 
-cwm_true_errant_mbm_sec <- cwm_true_errant_mbm %>% 
+cwm_exp_mbm_sec <- cwm_exp_mbm %>% 
   mutate(time = time/1000000000)
 
-ggplot(data = cwm_true_errant_mbm_sec, aes(x = expr, y = time))+
+ggplot(data = cwm_exp_mbm_sec, aes(x = expr, y = time))+
   geom_boxplot()+
   scale_x_discrete(labels = c("Optimized", "Matrix Multiplication"))+
   scale_y_continuous(breaks = seq(0, 6, 0.2), limits = c(2, 5.8), trans = "log10")+
@@ -421,7 +464,8 @@ ggplot(data = cwm_true_errant_mbm_sec, aes(x = expr, y = time))+
 ```{r}
 set.seed(2501)
 
-fdis_true_errant_df_function <- function(trait_df, abun_matrix, n){
+# Errant Poisson distribution
+fdis_exp_pois_df_func <- function(trait_df, abun_matrix, n){
   true_fdis <- fdis_value_func(trait_df = trait_df, abun_matrix = abun_matrix)
   list_errant_fdis <- list()
   repeat_list <- c(1:n)
@@ -448,17 +492,55 @@ fdis_true_errant_df_function <- function(trait_df, abun_matrix, n){
   return(full_df)
 }
 
-fdis_true_errant_df <- fdis_true_errant_df_function(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, n = 100)
+fdis_exp_pois_df <- fdis_exp_pois_df_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, n = 100)
+
+# Errant binomial distribution
+fdis_exp_binom_df_func <- function(trait_df, abun_matrix, n){
+  true_fdis <- fdis_value_func(trait_df = trait_df, abun_matrix = abun_matrix)
+  list_errant_fdis <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_abun <- binom_abun_func(abun_matrix = abun_matrix) %>% 
+      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
+      column_to_rownames(var='Plot') %>% 
+      data.matrix()
+    errant_trait <- trait_df %>% 
+      data.frame() %>% 
+      rownames_to_column(var = "Species") %>% 
+      filter(Species %in% names(errant_abun %>% data.frame())) %>% 
+      column_to_rownames(var = "Species")
+    errant_fdis <- fdis_value_func(trait_df = errant_trait, abun_matrix = errant_abun) %>% 
+      select(FDis)
+    list_errant_fdis[[i]] <- errant_fdis
+  }
+  errant_df <- map_dfc(list_errant_fdis, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FDis", n))
+  full_df <- errant_df %>% 
+    cbind(true_fdis, .) %>% 
+    rename("True_FDis" = FDis) %>% 
+    mutate(Mean_Errant_FDis = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FDis = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+fdis_exp_binom_df <- fdis_exp_binom_df_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, n = 100)
 ```
 
 ### Visualization (FDis - True vs Errant)
 
 ```{r}
-ggplot(data = fdis_true_errant_df, aes(x = True_FDis, y = Mean_Errant_FDis))+
+ggplot(data = fdis_exp_pois_df, aes(x = True_FDis, y = Mean_Errant_FDis))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FDis - SD_Errant_FDis, ymax = Mean_Errant_FDis + SD_Errant_FDis))+
   geom_abline(slope = 1)+
-  labs(x = "True FDis", y = "Mean Errant FDis")
+  labs(x = "True FDis", y = "Mean Errant FDis", title = "Scatterplot of true FDis values against errant FDis values
+       constructed by random Poisson distributions")
+
+ggplot(data = fdis_exp_binom_df, aes(x = True_FDis, y = Mean_Errant_FDis))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FDis - SD_Errant_FDis, ymax = Mean_Errant_FDis + SD_Errant_FDis))+
+  geom_abline(slope = 1)+
+  labs(x = "True FDis", y = "Mean Errant FDis", title = "Scatterplot of true FDis values against errant FDis values
+       constructed by random binomial distributions (prob = 0.8)")
 ```
 
 ## Functional richness (FRic)
@@ -466,7 +548,8 @@ ggplot(data = fdis_true_errant_df, aes(x = True_FDis, y = Mean_Errant_FDis))+
 ```{r message=FALSE}
 set.seed(2501)
 
-fric_true_errant_df_function <- function(trait_df, abun_df, n){
+# Errant Poisson distribution
+fric_exp_pois_df_func <- function(trait_df, abun_df, n){
   true_fric <- fric_value_func(trait_df = trait_df, abun_matrix = abun_df)
   list_errant_fric <- list()
   repeat_list <- c(1:n)
@@ -485,17 +568,47 @@ fric_true_errant_df_function <- function(trait_df, abun_df, n){
   return(full_df)
 }
 
-fric_true_errant_df <- fric_true_errant_df_function(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
+fric_exp_pois_df <- fric_exp_pois_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
+
+# Errant binomial distribution
+fric_exp_binom_df_func <- function(trait_df, abun_df, n){
+  true_fric <- fric_value_func(trait_df = trait_df, abun_matrix = abun_df)
+  list_errant_fric <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_fric <- fric_value_func(trait_df = trait_df, abun_matrix = binom_abun_func(abun_matrix = abun_df %>% data.matrix) %>% 
+                                     column_to_rownames(var='Plot')) %>% 
+      select(FRic)
+    list_errant_fric[[i]] <- errant_fric
+  }
+  errant_df <- map_dfc(list_errant_fric, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FRic", n))
+  full_df <- errant_df %>% 
+    cbind(true_fric, .) %>% 
+    rename("True_FRic" = FRic) %>% 
+    mutate(Mean_Errant_FRic = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FRic = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+fric_exp_binom_df <- fric_exp_binom_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
 ```
 
 ### Visualization (FRic - True vs Errant)
 
 ```{r}
-ggplot(data = fric_true_errant_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
+ggplot(data = fric_exp_pois_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FRic - SD_Errant_FRic, ymax = Mean_Errant_FRic + SD_Errant_FRic))+
   geom_abline(slope = 1)+
-  labs(x = "True FRic", y = "Mean Errant FRic")
+  labs(x = "True FRic", y = "Mean Errant FRic", title = "Scatterplot of true FRic values against errant FRic values
+       constructed by random Poisson distributions")
+
+ggplot(data = fric_exp_binom_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FRic - SD_Errant_FRic, ymax = Mean_Errant_FRic + SD_Errant_FRic))+
+  geom_abline(slope = 1)+
+  labs(x = "True FRic", y = "Mean Errant FRic", title = "Scatterplot of true FRic values against errant FRic values
+       constructed by random binomial distributions (prob = 0.8)")
 ```
 
 ## Functional evenness (FEve)
@@ -503,7 +616,8 @@ ggplot(data = fric_true_errant_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
 ```{r message=FALSE}
 set.seed(2501)
 
-feve_true_errant_df_function <- function(trait_df, abun_df, n){
+# Errant Poisson distribution
+feve_exp_pois_df_func <- function(trait_df, abun_df, n){
   true_feve <- feve_value_func(trait_df = trait_df, abun_matrix = abun_df)
   list_errant_feve <- list()
   repeat_list <- c(1:n)
@@ -522,17 +636,47 @@ feve_true_errant_df_function <- function(trait_df, abun_df, n){
   return(full_df)
 }
 
-feve_true_errant_df <- feve_true_errant_df_function(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
+feve_exp_pois_df <- feve_exp_pois_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
+
+# Errant binomial distribution
+feve_exp_binom_df_func <- function(trait_df, abun_df, n){
+  true_feve <- feve_value_func(trait_df = trait_df, abun_matrix = abun_df)
+  list_errant_feve <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_feve <- feve_value_func(trait_df = trait_df, abun_matrix = binom_abun_func(abun_matrix = abun_df %>% data.matrix) %>% 
+                                     column_to_rownames(var='Plot')) %>% 
+      select(FEve)
+    list_errant_feve[[i]] <- errant_feve
+  }
+  errant_df <- map_dfc(list_errant_feve, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FEve", n))
+  full_df <- errant_df %>% 
+    cbind(true_feve, .) %>% 
+    rename("True_FEve" = FEve) %>% 
+    mutate(Mean_Errant_FEve = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FEve = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+feve_exp_binom_df <- feve_exp_binom_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, n = 100)
 ```
 
 ### Visualization (FEve - True vs Errant)
 
 ```{r}
-ggplot(data = feve_true_errant_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
+ggplot(data = feve_exp_pois_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FEve - SD_Errant_FEve, ymax = Mean_Errant_FEve + SD_Errant_FEve))+
   geom_abline(slope = 1)+
-  labs(x = "True FEve", y = "Mean Errant FEve")
+  labs(x = "True FEve", y = "Mean Errant FEve", title = "Scatterplot of true FEve values against errant FEve values
+       constructed by random Poisson distributions")
+
+ggplot(data = feve_exp_binom_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FEve - SD_Errant_FEve, ymax = Mean_Errant_FEve + SD_Errant_FEve))+
+  geom_abline(slope = 1)+
+  labs(x = "True FEve", y = "Mean Errant FEve", title = "Scatterplot of true FEve values against errant FEve values
+       constructed by random binomial distributions (prob = 0.8)")
 ```
 
 ## Shannon diversity
@@ -540,7 +684,8 @@ ggplot(data = feve_true_errant_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
 ```{r}
 set.seed(2501)
 
-shannon_true_errant_df_function <- function(abun_df, n){
+# Errant Poisson distribution
+shannon_exp_pois_df_func <- function(abun_df, n){
   true_shannon <- shannon_value_func(abun_df = abun_df)
   list_errant_shannon <- list()
   repeat_list <- c(1:n)
@@ -559,34 +704,130 @@ shannon_true_errant_df_function <- function(abun_df, n){
   return(full_df)
 }
 
-shannon_true_errant_df <- shannon_true_errant_df_function(abun_df = ksr_abundance, n = 100)
+shannon_exp_pois_df <- shannon_exp_pois_df_func(abun_df = ksr_abundance, n = 100)
+
+# Errant binomial distribution
+shannon_exp_binom_df_func <- function(abun_df, n){
+  true_shannon <- shannon_value_func(abun_df = abun_df)
+  list_errant_shannon <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_abun <- binom_abun_func(abun_matrix = abun_df %>% column_to_rownames(var='Plot') %>% data.matrix) %>% data.frame()
+    errant_abun$Plot <- as.numeric(levels(errant_abun$Plot)[errant_abun$Plot])
+    errant_shannon <- shannon_value_func(abun_df = errant_abun) %>% select(Shannon)
+    list_errant_shannon[[i]] <- errant_shannon
+  }
+  errant_df <- map_dfc(list_errant_shannon, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_Shannon", n))
+  full_df <- errant_df %>% 
+    cbind(true_shannon, .) %>% 
+    rename("True_Shannon" = Shannon) %>% 
+    mutate(Mean_Errant_Shannon = apply(.[, -c(1, 2)], 1, mean), SD_Errant_Shannon = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
+
+shannon_exp_binom_df <- shannon_exp_binom_df_func(abun_df = ksr_abundance, n = 100)
 ```
 
 ### Visualization (Shannon - True vs Errant)
 
 ```{r}
-ggplot(data = shannon_true_errant_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
+ggplot(data = shannon_exp_pois_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_Shannon - SD_Errant_Shannon, ymax = Mean_Errant_Shannon + SD_Errant_Shannon))+
   geom_abline(slope = 1)+
-  labs(x = "True Shannon", y = "Mean Errant Shannon")
+  labs(x = "True Shannon", y = "Mean Errant Shannon", title = "Scatterplot of true Shannon values against errant Shannon values
+       constructed by random Poisson distributions")
+
+ggplot(data = shannon_exp_binom_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_Shannon - SD_Errant_Shannon, ymax = Mean_Errant_Shannon + SD_Errant_Shannon))+
+  geom_abline(slope = 1)+
+  labs(x = "True Shannon", y = "Mean Errant Shannon", title = "Scatterplot of true Shannon values against errant Shannon values
+       constructed by random binomial distributions (prob = 0.8)")
 ```
 
-# Binomial distribution
+# Functional trait distributions
 
-rbinom(n = nrow(species column), size = vector of true/original abundances, prob = 0.8 or 0.9)
+Below are the functional trait density distributions for SLA and leaf weight. Density distribution plots show that the leaf weight distribution is far more positive-skewed than the SLA distribution. Blocking has been done by species and by plot, with no new revelations produced by either blocking method.
+
+## SLA
 
 ```{r}
-rbinom(n = 120, size = 10, )
+
+# No blocking
+ggplot(data = ksr_trait_full, aes(x = `SLA_.cm2.g.`))+
+  geom_density()+
+  scale_y_continuous(limits = c(0, 0.006), breaks = seq(0, 1, 0.001))+
+  theme_bw()+
+  labs(x = "SLA", y = "Density", title = "Density distribution of SLA values for all species across all plots")
+
+# Blocking by species
+density_sla_species <- function(df){
+  species_list <- unique(ksr_trait_full$Species)
+  for(i in seq_along(species_list)){
+    density_plots <- ggplot(df %>% filter(Species == species_list[i]), aes(x = `SLA_.cm2.g.`))+
+      geom_density()+
+      labs(x = "SLA", y = "Density")+
+      ggtitle(paste("Density distribution of SLA values for ", species_list[i], " across all plots", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_sla_species(ksr_trait_full)
+
+# Blocking by plot
+density_sla_plot <- function(df){
+  plot_list <- unique(sort(ksr_trait_full$Plot))
+  for(i in seq_along(plot_list)){
+    density_plots <- ggplot(df %>% filter(Plot == plot_list[i]), aes(x = `SLA_.cm2.g.`))+
+      geom_density()+
+      labs(x = "SLA", y = "Density")+
+      ggtitle(paste("Density distribution of SLA values for plot ", plot_list[i], " across all species", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_sla_plot(ksr_trait_full)
 ```
 
+## Leaf Weight
+
 ```{r}
-test_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/2018_Species_Ontogeny_Trait.csv")
 
-ggplot(data = test_trait, aes(x = `Weight_(g)`))+
-  geom_histogram()
+# No blocking
+ggplot(data = ksr_trait_full, aes(x = `Weight_.g.`))+
+  geom_density()+
+  scale_y_continuous(limits = c(0, 14), breaks = seq(0, 14, 2))+
+  theme_bw()+
+  labs(x = "Leaf Weight", y = "Density", title = "Density distribution of Leaf Weight values for all species across all plots")
 
-ggplot(data = test_trait, aes(x = `SLA_(cm2/g)`))+
-  geom_histogram()
+# Blocking by species
+density_lw_species <- function(df){
+  species_list <- unique(ksr_trait_full$Species)
+  for(i in seq_along(species_list)){
+    density_plots <- ggplot(df %>% filter(Species == species_list[i]), aes(x = `Weight_.g.`))+
+      geom_density()+
+      labs(x = "Leaf Weight", y = "Density")+
+      ggtitle(paste("Density distribution of Leaf Weight values for ", species_list[i], " across all plots", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_lw_species(ksr_trait_full)
+
+# Blocking by plot
+density_lw_plot <- function(df){
+  plot_list <- unique(sort(ksr_trait_full$Plot))
+  for(i in seq_along(plot_list)){
+    density_plots <- ggplot(df %>% filter(Plot == plot_list[i]), aes(x = `Weight_.g.`))+
+      geom_density()+
+      labs(x = "Leaf Weight", y = "Density")+
+      ggtitle(paste("Density distribution of Leaf Weight values for plot ", plot_list[i], " across all species", sep = ''))
+    print(density_plots)
+  }
+}
+
+density_lw_plot(ksr_trait_full)
 ```
 
