@@ -40,9 +40,17 @@ ksr_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018
   filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
   unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
-  select(-c(Number : `Area_.cm2.`)) %>% 
+  select(c(Plot, Species, `SLA_.cm2.g.`)) %>% 
   group_by(Plot, Species) %>%
   summarise(SLA = mean(`SLA_.cm2.g.`))
+
+ksr_trait_leaf <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
+  filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
+  unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot)) %>% 
+  select(c(Plot, Species, `Weight_.g.`)) %>% 
+  group_by(Plot, Species) %>%
+  summarise(LW = mean(`Weight_.g.`))
 
 # Datasets have been summarised (no separation by plots)
 ksr_abun_sum <- ksr_abundance %>% 
@@ -60,12 +68,19 @@ ksr_trait_sum <- ksr_trait %>%
   column_to_rownames(var='Species') %>% 
   data.matrix()
 
+ksr_trait_sum_leaf <- ksr_trait_leaf %>% 
+  group_by(Species) %>% 
+  summarise(LW = mean(LW)) %>% 
+  filter(Species %in% colnames(ksr_abun_sum)) %>% 
+  column_to_rownames(var='Species') %>% 
+  data.matrix()
+
 # REND datasets
 ksr_REND_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
   filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
   unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
-  select(-c(Number : `Area_.cm2.`)) %>% 
+  select(c(Plot, Species, `SLA_.cm2.g.`)) %>% 
   filter(Species!='Asclepias_tuberosa' & Species!='Cirsium_vulgare' & Species!='Melilotus_albus')
 
 ksr_REND_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018 2m survey.csv") %>% 
@@ -127,11 +142,13 @@ cwm_value_func <- function(trait_df, abun_df){
     cwm_value <- functcomp(x = cwm_trait, a = cwm_abun)
     list_cwm[[i]] <- cwm_value
   }
-  return(data.frame(plot_list, bind_rows(list_cwm)$SLA) %>% 
-    rename("Plot" = "plot_list", "CWM" = "bind_rows.list_cwm..SLA"))
+  return(data.frame(plot_list, bind_rows(list_cwm)[ , 2]) %>% 
+    rename("Plot" = "plot_list", "CWM" = "bind_rows.list_cwm....2."))
 }
 
 cwm_value_func(trait_df = ksr_trait, abun_df = ksr_abundance)
+
+cwm_value_func(trait_df = ksr_trait_leaf, abun_df = ksr_abundance)
 ```
 
 ### Matrix multiplication method (CWM)
@@ -260,6 +277,8 @@ fdis_value_func <- function(trait_df, abun_matrix){
 }
 
 fdis_value_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum)
+
+fdis_value_func(trait_df = ksr_trait_sum_leaf, abun_matrix = ksr_abun_sum)
 ```
 
 ## Functional richness (FRic) and Functional evenness (FEve)
@@ -342,54 +361,39 @@ Rough estimates of execution time:
  - 10000 simulations: ~30min
 
 ```{r}
-set.seed(2501)
+cwm_exp_df_func <- function(trait_df, abun_df, abun_matrix, method, n){
+  true_cwm <- cwm_value_func(trait_df = trait_df, abun_df = abun_df)
+  list_errant_cwm <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_cwm <- cwm_value_func(trait_df = trait_df, abun_df = errant_abun_func(abun_matrix = abun_matrix, method = method)) %>% select(CWM)
+    list_errant_cwm[[i]] <- errant_cwm
+  }
+  errant_df <- map_dfc(list_errant_cwm, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_CWM", n))
+  full_df <- errant_df %>% 
+    cbind(true_cwm, .) %>% 
+    rename("True_CWM" = CWM) %>% 
+    mutate(Mean_Errant_CWM = apply(.[, -c(1, 2)], 1, mean), SD_Errant_CWM = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
 
 # Errant Poisson distribution
-cwm_exp_pois_df_func <- function(trait_df, abun_df, abun_matrix, method, n){
-  true_cwm <- cwm_value_func(trait_df = trait_df, abun_df = abun_df)
-  list_errant_cwm <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_cwm <- cwm_value_func(trait_df = trait_df, abun_df = errant_abun_func(abun_matrix = abun_matrix, method = method)) %>% select(CWM)
-    list_errant_cwm[[i]] <- errant_cwm
-  }
-  errant_df <- map_dfc(list_errant_cwm, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_CWM", n))
-  full_df <- errant_df %>% 
-    cbind(true_cwm, .) %>% 
-    rename("True_CWM" = CWM) %>% 
-    mutate(Mean_Errant_CWM = apply(.[, -c(1, 2)], 1, mean), SD_Errant_CWM = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-cwm_exp_pois_df <- cwm_exp_pois_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "Poisson", n = 100)
+set.seed(2501)
+cwm_exp_pois_df_sla <- cwm_exp_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "Poisson", n = 100)
+set.seed(2501)
+cwm_exp_pois_df_lw <- cwm_exp_df_func(trait_df = ksr_trait_leaf, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "Poisson", n = 100)
 
 # Errant binomial distribution
-cwm_exp_binom_df_func <- function(trait_df, abun_df, abun_matrix, method, n){
-  true_cwm <- cwm_value_func(trait_df = trait_df, abun_df = abun_df)
-  list_errant_cwm <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_cwm <- cwm_value_func(trait_df = trait_df, abun_df = errant_abun_func(abun_matrix = abun_matrix, method = method)) %>% select(CWM)
-    list_errant_cwm[[i]] <- errant_cwm
-  }
-  errant_df <- map_dfc(list_errant_cwm, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_CWM", n))
-  full_df <- errant_df %>% 
-    cbind(true_cwm, .) %>% 
-    rename("True_CWM" = CWM) %>% 
-    mutate(Mean_Errant_CWM = apply(.[, -c(1, 2)], 1, mean), SD_Errant_CWM = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-cwm_exp_binom_df <- cwm_exp_binom_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "binomial", n = 100)
+set.seed(2501)
+cwm_exp_binom_df_sla <- cwm_exp_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "binomial", n = 100)
+set.seed(2501)
+cwm_exp_binom_df_lw <- cwm_exp_df_func(trait_df = ksr_trait_leaf, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "binomial", n = 100)
 ```
 
 ### Matrix multiplication (CWM)
 
 ```{r}
-set.seed(2501)
-
 cwm_exp_mm_df_func <- function(trait_df, abun_df, abun_matrix, method, n){
   true_cwm <- cwm_value_mm_func(trait_df = trait_df, abun_df = abun_df)
   list_errant_cwm <- list()
@@ -411,19 +415,41 @@ cwm_exp_mm_df_func <- function(trait_df, abun_df, abun_matrix, method, n){
 ### Visualization (CWM - True vs Errant)
 
 ```{r}
-ggplot(data = cwm_exp_pois_df, aes(x = True_CWM, y = Mean_Errant_CWM))+
+scatter_cwm_poisson_sla <- ggplot(data = cwm_exp_pois_df_sla, aes(x = True_CWM, y = Mean_Errant_CWM))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_CWM - SD_Errant_CWM, ymax = Mean_Errant_CWM + SD_Errant_CWM))+
   geom_abline(slope = 1)+
   labs(x = "True CWM", y = "Mean Errant CWM", title = "Scatterplot of true CWM values against errant CWM values
-       constructed by random Poisson distributions")
+       constructed by random Poisson distributions (SLA)")
 
-ggplot(data = cwm_exp_binom_df, aes(x = True_CWM, y = Mean_Errant_CWM))+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_cwm_poisson_sla.png", plot = scatter_cwm_poisson_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_cwm_poisson_lw <- ggplot(data = cwm_exp_pois_df_lw, aes(x = True_CWM, y = Mean_Errant_CWM))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_CWM - SD_Errant_CWM, ymax = Mean_Errant_CWM + SD_Errant_CWM))+
   geom_abline(slope = 1)+
   labs(x = "True CWM", y = "Mean Errant CWM", title = "Scatterplot of true CWM values against errant CWM values
-       constructed by random binomial distributions (prob = 0.8)")
+       constructed by random Poisson distributions (LW)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_cwm_poisson_lw.png", plot = scatter_cwm_poisson_lw, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_cwm_binomial_sla <- ggplot(data = cwm_exp_binom_df_sla, aes(x = True_CWM, y = Mean_Errant_CWM))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_CWM - SD_Errant_CWM, ymax = Mean_Errant_CWM + SD_Errant_CWM))+
+  geom_abline(slope = 1)+
+  labs(x = "True CWM", y = "Mean Errant CWM", title = "Scatterplot of true CWM values against errant CWM values
+       constructed by random binomial distributions (prob = 0.8) (SLA)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_cwm_binomial_sla.png", plot = scatter_cwm_binomial_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_cwm_binomial_lw <- ggplot(data = cwm_exp_binom_df_lw, aes(x = True_CWM, y = Mean_Errant_CWM))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_CWM - SD_Errant_CWM, ymax = Mean_Errant_CWM + SD_Errant_CWM))+
+  geom_abline(slope = 1)+
+  labs(x = "True CWM", y = "Mean Errant CWM", title = "Scatterplot of true CWM values against errant CWM values
+       constructed by random binomial distributions (prob = 0.8) (LW)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_cwm_binomial_lw.png", plot = scatter_cwm_binomial_lw, dpi = 300, width = par("din")[1], height = par("din")[2])
 ```
 
 ### Microbenchmark (CWM)
@@ -432,7 +458,7 @@ Microbenchmark function is used to compare the runtimes of both methods of CWM c
 
 ```{r}
 # cwm_exp_mbm <- microbenchmark(
-#   cwm_exp_pois_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "Poisson", n = 10),
+#   cwm_exp_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "Poisson", n = 10),
 #   cwm_exp_mm_df_func(trait_df = ksr_trait, abun_df = ksr_abundance, abun_matrix = ksr_abun_matrix, method = "Poisson", n = 10))
 
 cwm_exp_mbm_sec <- cwm_exp_mbm %>% 
@@ -449,135 +475,115 @@ ggplot(data = cwm_exp_mbm_sec, aes(x = expr, y = time))+
 ## Functional dispersion (FDis)
 
 ```{r}
-set.seed(2501)
+fdis_exp_df_func <- function(trait_df, abun_matrix, method, n){
+  true_fdis <- fdis_value_func(trait_df = trait_df, abun_matrix = abun_matrix)
+  list_errant_fdis <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_abun <- errant_abun_func(abun_matrix = abun_matrix, method = method) %>% 
+      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
+      column_to_rownames(var = "Plot") %>% 
+      data.matrix()
+    errant_trait <- trait_df %>% 
+      data.frame() %>% 
+      rownames_to_column(var = "Species") %>% 
+      filter(Species %in% names(errant_abun %>% data.frame())) %>% 
+      column_to_rownames(var = "Species")
+    errant_fdis <- fdis_value_func(trait_df = errant_trait, abun_matrix = errant_abun) %>% 
+      select(FDis)
+    list_errant_fdis[[i]] <- errant_fdis
+  }
+  errant_df <- map_dfc(list_errant_fdis, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FDis", n))
+  full_df <- errant_df %>% 
+    cbind(true_fdis, .) %>% 
+    rename("True_FDis" = FDis) %>% 
+    mutate(Mean_Errant_FDis = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FDis = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
 
 # Errant Poisson distribution
-fdis_exp_pois_df_func <- function(trait_df, abun_matrix, method, n){
-  true_fdis <- fdis_value_func(trait_df = trait_df, abun_matrix = abun_matrix)
-  list_errant_fdis <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_abun <- errant_abun_func(abun_matrix = abun_matrix, method = method) %>% 
-      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
-      column_to_rownames(var='Plot') %>% 
-      data.matrix()
-    errant_trait <- trait_df %>% 
-      data.frame() %>% 
-      rownames_to_column(var = "Species") %>% 
-      filter(Species %in% names(errant_abun %>% data.frame())) %>% 
-      column_to_rownames(var = "Species")
-    errant_fdis <- fdis_value_func(trait_df = errant_trait, abun_matrix = errant_abun) %>% 
-      select(FDis)
-    list_errant_fdis[[i]] <- errant_fdis
-  }
-  errant_df <- map_dfc(list_errant_fdis, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FDis", n))
-  full_df <- errant_df %>% 
-    cbind(true_fdis, .) %>% 
-    rename("True_FDis" = FDis) %>% 
-    mutate(Mean_Errant_FDis = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FDis = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-fdis_exp_pois_df <- fdis_exp_pois_df_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, method = "Poisson", n = 100)
+set.seed(2501)
+fdis_exp_pois_df_sla <- fdis_exp_df_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, method = "Poisson", n = 100)
+set.seed(2501)
+fdis_exp_pois_df_lw <- fdis_exp_df_func(trait_df = ksr_trait_sum_leaf, abun_matrix = ksr_abun_sum, method = "Poisson", n = 100)
 
 # Errant binomial distribution
-fdis_exp_binom_df_func <- function(trait_df, abun_matrix, method, n){
-  true_fdis <- fdis_value_func(trait_df = trait_df, abun_matrix = abun_matrix)
-  list_errant_fdis <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_abun <- errant_abun_func(abun_matrix = abun_matrix, method = method) %>% 
-      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
-      column_to_rownames(var='Plot') %>% 
-      data.matrix()
-    errant_trait <- trait_df %>% 
-      data.frame() %>% 
-      rownames_to_column(var = "Species") %>% 
-      filter(Species %in% names(errant_abun %>% data.frame())) %>% 
-      column_to_rownames(var = "Species")
-    errant_fdis <- fdis_value_func(trait_df = errant_trait, abun_matrix = errant_abun) %>% 
-      select(FDis)
-    list_errant_fdis[[i]] <- errant_fdis
-  }
-  errant_df <- map_dfc(list_errant_fdis, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FDis", n))
-  full_df <- errant_df %>% 
-    cbind(true_fdis, .) %>% 
-    rename("True_FDis" = FDis) %>% 
-    mutate(Mean_Errant_FDis = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FDis = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-fdis_exp_binom_df <- fdis_exp_binom_df_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, method = "binomial", n = 100)
+set.seed(2501)
+fdis_exp_binom_df_sla <- fdis_exp_df_func(trait_df = ksr_trait_sum, abun_matrix = ksr_abun_sum, method = "binomial", n = 100)
+set.seed(2501)
+fdis_exp_binom_df_lw <- fdis_exp_df_func(trait_df = ksr_trait_sum_leaf, abun_matrix = ksr_abun_sum, method = "binomial", n = 100)
 ```
 
 ### Visualization (FDis - True vs Errant)
 
 ```{r}
-ggplot(data = fdis_exp_pois_df, aes(x = True_FDis, y = Mean_Errant_FDis))+
+scatter_fdis_poisson_sla <- ggplot(data = fdis_exp_pois_df_sla, aes(x = True_FDis, y = Mean_Errant_FDis))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FDis - SD_Errant_FDis, ymax = Mean_Errant_FDis + SD_Errant_FDis))+
   geom_abline(slope = 1)+
   labs(x = "True FDis", y = "Mean Errant FDis", title = "Scatterplot of true FDis values against errant FDis values
-       constructed by random Poisson distributions")
+       constructed by random Poisson distributions (SLA)")
 
-ggplot(data = fdis_exp_binom_df, aes(x = True_FDis, y = Mean_Errant_FDis))+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_fdis_poisson_sla.png", plot = scatter_fdis_poisson_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_fdis_poisson_lw <- ggplot(data = fdis_exp_pois_df_lw, aes(x = True_FDis, y = Mean_Errant_FDis))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FDis - SD_Errant_FDis, ymax = Mean_Errant_FDis + SD_Errant_FDis))+
   geom_abline(slope = 1)+
   labs(x = "True FDis", y = "Mean Errant FDis", title = "Scatterplot of true FDis values against errant FDis values
-       constructed by random binomial distributions (prob = 0.8)")
+       constructed by random Poisson distributions (LW)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_fdis_poisson_lw.png", plot = scatter_fdis_poisson_lw, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_fdis_binomial_sla <- ggplot(data = fdis_exp_binom_df_sla, aes(x = True_FDis, y = Mean_Errant_FDis))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FDis - SD_Errant_FDis, ymax = Mean_Errant_FDis + SD_Errant_FDis))+
+  geom_abline(slope = 1)+
+  labs(x = "True FDis", y = "Mean Errant FDis", title = "Scatterplot of true FDis values against errant FDis values
+       constructed by random binomial distributions (prob = 0.8) (SLA)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_fdis_binomial_sla.png", plot = scatter_fdis_binomial_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_fdis_binomial_lw <- ggplot(data = fdis_exp_binom_df_lw, aes(x = True_FDis, y = Mean_Errant_FDis))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_Errant_FDis - SD_Errant_FDis, ymax = Mean_Errant_FDis + SD_Errant_FDis))+
+  geom_abline(slope = 1)+
+  labs(x = "True FDis", y = "Mean Errant FDis", title = "Scatterplot of true FDis values against errant FDis values
+       constructed by random binomial distributions (prob = 0.8) (LW)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_fdis_binomial_lw.png", plot = scatter_fdis_binomial_lw, dpi = 300, width = par("din")[1], height = par("din")[2])
 ```
 
 ## Functional richness (FRic)
 
-```{r message=FALSE}
-set.seed(2501)
+```{r message = FALSE}
+fric_exp_df_func <- function(trait_df, abun_df, method, n){
+  true_fric <- fric_value_func(trait_df = trait_df, abun_matrix = abun_df)
+  list_errant_fric <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_fric <- fric_value_func(trait_df = trait_df, abun_matrix = errant_abun_func(abun_matrix = abun_df %>% data.matrix, method = method) %>% 
+                                     column_to_rownames(var = "Plot")) %>% 
+      select(FRic)
+    list_errant_fric[[i]] <- errant_fric
+  }
+  errant_df <- map_dfc(list_errant_fric, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FRic", n))
+  full_df <- errant_df %>% 
+    cbind(true_fric, .) %>% 
+    rename("True_FRic" = FRic) %>% 
+    mutate(Mean_Errant_FRic = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FRic = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
 
 # Errant Poisson distribution
-fric_exp_pois_df_func <- function(trait_df, abun_df, method, n){
-  true_fric <- fric_value_func(trait_df = trait_df, abun_matrix = abun_df)
-  list_errant_fric <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_fric <- fric_value_func(trait_df = trait_df, abun_matrix = errant_abun_func(abun_matrix = abun_df %>% data.matrix, method = method) %>% 
-                                     column_to_rownames(var='Plot')) %>% 
-      select(FRic)
-    list_errant_fric[[i]] <- errant_fric
-  }
-  errant_df <- map_dfc(list_errant_fric, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FRic", n))
-  full_df <- errant_df %>% 
-    cbind(true_fric, .) %>% 
-    rename("True_FRic" = FRic) %>% 
-    mutate(Mean_Errant_FRic = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FRic = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-fric_exp_pois_df <- fric_exp_pois_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
+set.seed(2501)
+fric_exp_pois_df <- fric_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
 
 # Errant binomial distribution
-fric_exp_binom_df_func <- function(trait_df, abun_df, method, n){
-  true_fric <- fric_value_func(trait_df = trait_df, abun_matrix = abun_df)
-  list_errant_fric <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_fric <- fric_value_func(trait_df = trait_df, abun_matrix = errant_abun_func(abun_matrix = abun_df %>% data.matrix, method = method) %>% 
-                                     column_to_rownames(var='Plot')) %>% 
-      select(FRic)
-    list_errant_fric[[i]] <- errant_fric
-  }
-  errant_df <- map_dfc(list_errant_fric, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FRic", n))
-  full_df <- errant_df %>% 
-    cbind(true_fric, .) %>% 
-    rename("True_FRic" = FRic) %>% 
-    mutate(Mean_Errant_FRic = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FRic = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-fric_exp_binom_df <- fric_exp_binom_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
+set.seed(2501)
+fric_exp_binom_df <- fric_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
 ```
 
 ### Visualization (FRic - True vs Errant)
@@ -600,52 +606,33 @@ ggplot(data = fric_exp_binom_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
 
 ## Functional evenness (FEve)
 
-```{r message=FALSE}
-set.seed(2501)
+```{r message = FALSE}
+feve_exp_df_func <- function(trait_df, abun_df, method, n){
+  true_feve <- feve_value_func(trait_df = trait_df, abun_matrix = abun_df)
+  list_errant_feve <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_feve <- feve_value_func(trait_df = trait_df, abun_matrix = errant_abun_func(abun_matrix = abun_df %>% data.matrix, method = method) %>% 
+                                     column_to_rownames(var = "Plot")) %>% 
+      select(FEve)
+    list_errant_feve[[i]] <- errant_feve
+  }
+  errant_df <- map_dfc(list_errant_feve, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FEve", n))
+  full_df <- errant_df %>% 
+    cbind(true_feve, .) %>% 
+    rename("True_FEve" = FEve) %>% 
+    mutate(Mean_Errant_FEve = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FEve = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
 
 # Errant Poisson distribution
-feve_exp_pois_df_func <- function(trait_df, abun_df, method, n){
-  true_feve <- feve_value_func(trait_df = trait_df, abun_matrix = abun_df)
-  list_errant_feve <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_feve <- feve_value_func(trait_df = trait_df, abun_matrix = errant_abun_func(abun_matrix = abun_df %>% data.matrix, method = method) %>% 
-                                     column_to_rownames(var='Plot')) %>% 
-      select(FEve)
-    list_errant_feve[[i]] <- errant_feve
-  }
-  errant_df <- map_dfc(list_errant_feve, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FEve", n))
-  full_df <- errant_df %>% 
-    cbind(true_feve, .) %>% 
-    rename("True_FEve" = FEve) %>% 
-    mutate(Mean_Errant_FEve = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FEve = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-feve_exp_pois_df <- feve_exp_pois_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
+set.seed(2501)
+feve_exp_pois_df <- feve_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
 
 # Errant binomial distribution
-feve_exp_binom_df_func <- function(trait_df, abun_df, method, n){
-  true_feve <- feve_value_func(trait_df = trait_df, abun_matrix = abun_df)
-  list_errant_feve <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_feve <- feve_value_func(trait_df = trait_df, abun_matrix = errant_abun_func(abun_matrix = abun_df %>% data.matrix, method = method) %>% 
-                                     column_to_rownames(var='Plot')) %>% 
-      select(FEve)
-    list_errant_feve[[i]] <- errant_feve
-  }
-  errant_df <- map_dfc(list_errant_feve, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_FEve", n))
-  full_df <- errant_df %>% 
-    cbind(true_feve, .) %>% 
-    rename("True_FEve" = FEve) %>% 
-    mutate(Mean_Errant_FEve = apply(.[, -c(1, 2)], 1, mean), SD_Errant_FEve = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-feve_exp_binom_df <- feve_exp_binom_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
+set.seed(2501)
+feve_exp_binom_df <- feve_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
 ```
 
 ### Visualization (FEve - True vs Errant)
@@ -669,51 +656,32 @@ ggplot(data = feve_exp_binom_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
 ## Shannon diversity
 
 ```{r}
-set.seed(2501)
+shannon_exp_df_func <- function(abun_df, method, n){
+  true_shannon <- shannon_value_func(abun_df = abun_df)
+  list_errant_shannon <- list()
+  repeat_list <- c(1:n)
+  for(i in seq_along(repeat_list)){
+    errant_abun <- errant_abun_func(abun_matrix = abun_df %>% column_to_rownames(var = "Plot") %>% data.matrix, method = method) %>% data.frame()
+    errant_abun$Plot <- as.numeric(levels(errant_abun$Plot)[errant_abun$Plot])
+    errant_shannon <- shannon_value_func(abun_df = errant_abun) %>% select(Shannon)
+    list_errant_shannon[[i]] <- errant_shannon
+  }
+  errant_df <- map_dfc(list_errant_shannon, as.list)
+  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_Shannon", n))
+  full_df <- errant_df %>% 
+    cbind(true_shannon, .) %>% 
+    rename("True_Shannon" = Shannon) %>% 
+    mutate(Mean_Errant_Shannon = apply(.[, -c(1, 2)], 1, mean), SD_Errant_Shannon = apply(.[, -c(1, 2)], 1, sd))
+  return(full_df)
+}
 
 # Errant Poisson distribution
-shannon_exp_pois_df_func <- function(abun_df, method, n){
-  true_shannon <- shannon_value_func(abun_df = abun_df)
-  list_errant_shannon <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_abun <- errant_abun_func(abun_matrix = abun_df %>% column_to_rownames(var='Plot') %>% data.matrix, method = method) %>% data.frame()
-    errant_abun$Plot <- as.numeric(levels(errant_abun$Plot)[errant_abun$Plot])
-    errant_shannon <- shannon_value_func(abun_df = errant_abun) %>% select(Shannon)
-    list_errant_shannon[[i]] <- errant_shannon
-  }
-  errant_df <- map_dfc(list_errant_shannon, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_Shannon", n))
-  full_df <- errant_df %>% 
-    cbind(true_shannon, .) %>% 
-    rename("True_Shannon" = Shannon) %>% 
-    mutate(Mean_Errant_Shannon = apply(.[, -c(1, 2)], 1, mean), SD_Errant_Shannon = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-shannon_exp_pois_df <- shannon_exp_pois_df_func(abun_df = ksr_abundance, method = "Poisson", n = 100)
+set.seed(2501)
+shannon_exp_pois_df <- shannon_exp_df_func(abun_df = ksr_abundance, method = "Poisson", n = 100)
 
 # Errant binomial distribution
-shannon_exp_binom_df_func <- function(abun_df, method, n){
-  true_shannon <- shannon_value_func(abun_df = abun_df)
-  list_errant_shannon <- list()
-  repeat_list <- c(1:n)
-  for(i in seq_along(repeat_list)){
-    errant_abun <- errant_abun_func(abun_matrix = abun_df %>% column_to_rownames(var='Plot') %>% data.matrix, method = method) %>% data.frame()
-    errant_abun$Plot <- as.numeric(levels(errant_abun$Plot)[errant_abun$Plot])
-    errant_shannon <- shannon_value_func(abun_df = errant_abun) %>% select(Shannon)
-    list_errant_shannon[[i]] <- errant_shannon
-  }
-  errant_df <- map_dfc(list_errant_shannon, as.list)
-  names(errant_df)[] <- unlist(mapply(function(x, y) paste(x, seq(1, y), sep = "_"), "Errant_Shannon", n))
-  full_df <- errant_df %>% 
-    cbind(true_shannon, .) %>% 
-    rename("True_Shannon" = Shannon) %>% 
-    mutate(Mean_Errant_Shannon = apply(.[, -c(1, 2)], 1, mean), SD_Errant_Shannon = apply(.[, -c(1, 2)], 1, sd))
-  return(full_df)
-}
-
-shannon_exp_binom_df <- shannon_exp_binom_df_func(abun_df = ksr_abundance, method = "binomial", n = 100)
+set.seed(2501)
+shannon_exp_binom_df <- shannon_exp_df_func(abun_df = ksr_abundance, method = "binomial", n = 100)
 ```
 
 ### Visualization (Shannon - True vs Errant)
