@@ -12,7 +12,7 @@ output:
 
 **Specific leaf area (SLA) will be chosen to be the functional trait of focus (chosen arbitrarily).**
 
-```{r message=FALSE, warning=FALSE}
+```{r message = FALSE, warning = FALSE}
 library(tidyverse)
 library(knitr)
 library(FD)
@@ -81,15 +81,30 @@ ksr_REND_trait <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV
   unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
   select(c(Plot, Species, `SLA_.cm2.g.`)) %>% 
-  filter(Species!='Asclepias_tuberosa' & Species!='Cirsium_vulgare' & Species!='Melilotus_albus')
+  filter(Species != 'Asclepias_tuberosa' & Species != 'Cirsium_vulgare' & Species != 'Melilotus_albus')
+
+ksr_REND_trait_leaf <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
+  filter(Species != "Lolium_aparine" & Species != "Silene_latifolia") %>% 
+  unite(Plot, c(Block, Plot_Number), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot)) %>% 
+  select(c(Plot, Species, `Weight_.g.`)) %>% 
+  filter(Species != 'Asclepias_tuberosa' & Species != 'Cirsium_vulgare' & Species != 'Melilotus_albus')
 
 ksr_REND_abundance <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018 2m survey.csv") %>% 
   filter(Size == 2) %>% 
   unite(Plot, c(Block, Plot), remove = TRUE, sep = ".") %>% 
   transform(Plot = as.numeric(Plot)) %>% 
   select(-c(Size, Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, Symphyothricum_latiflorium)) %>% 
-  column_to_rownames(var='Plot') %>% 
+  column_to_rownames(var = 'Plot') %>% 
   select(one_of(unique(ksr_REND_trait$Species)))
+
+ksr_REND_abundance_leaf <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018 2m survey.csv") %>% 
+  filter(Size == 2) %>% 
+  unite(Plot, c(Block, Plot), remove = TRUE, sep = ".") %>% 
+  transform(Plot = as.numeric(Plot)) %>% 
+  select(-c(Size, Lactuca_serriola, Phleum_pratense, Phragmites_australis, Silene_latifolia, Sonchus_oleraceous, Symphyothricum_latiflorium)) %>% 
+  column_to_rownames(var = 'Plot') %>% 
+  select(one_of(unique(ksr_REND_trait_leaf$Species)))
 
 # Full trait dataset with only plot transformation
 ksr_trait_full <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV/2018_Species_Ontogeny_Trait.csv") %>% 
@@ -99,9 +114,7 @@ ksr_trait_full <- read_csv("~/Desktop/Current Courses/EEB498/EEB498_IndpProj/CSV
 
 # To-do list
 
-Look at other distributions
- - negative binomial distribution (later consideration)
-  - dispersion factor (size = 0.5 or 1)
+Quantification of robustness
 
 # Concerns
 
@@ -203,69 +216,7 @@ ggplot(data = cwm_mbm_sec, aes(x = expr, y = time))+
 
 ## Functional dispersion (FDis)
 
-*For loops are sequenced along specific Plot numbers in the trait dataset, because the trait dataset only has functional trait values for only certain plots.*
-
-*Deprecated*
-
-```{r}
-# Function to create an absolute abundance matrix for each plot
-fdis_abun_func <- function(df){
-  list_matrix <- list()
-  abun_list <- unique(ksr_trait$Plot)
-  for(i in seq_along(abun_list)){
-    plot_matrix <- df %>% 
-      filter(Plot == abun_list[i]) %>% 
-      column_to_rownames(var = "Plot")
-    list_matrix[[i]] <- plot_matrix
-  }
-  list_matrix <- Reduce(f = rbind, x = list_matrix) %>% 
-      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
-      data.matrix() %>%
-      asplit(1)
-  return(list_matrix)
-}
-
-# Function to create a functional trait dataframe for each plot
-fdis_trait_func <- function(df){
-  list_df <- list()
-  trait_list <- unique(ksr_trait$Plot)
-  for(i in seq_along(trait_list)){
-    plot_df <- df %>% 
-      filter(Plot == trait_list[i]) %>% 
-      column_to_rownames(var = "Species")
-    list_df[[i]] <- plot_df
-  }
-  return(list_df)
-}
-
-# Function to create a dataframe of all FDis values of each plot
-# Function allows fdisp to calculate a FDis value of each plot using the respective trait dataframe and abundance matrix
-fdis_value_func <- function(trait_df, abun_df){
-  list_fdis <- list()
-  fdis_list <- unique(ksr_trait$Plot)
-  for(i in seq_along(fdis_list)){
-    plot_abun_matrix <- fdis_abun_func(df = abun_df)[[i]] %>% 
-      t() %>% 
-      data.frame() %>% 
-      select(one_of(rownames(fdis_trait_func(df = trait_df)[[i]]))) %>% 
-      select_if(~ !is.numeric(.) || sum(.) != 0) %>% 
-      data.matrix()
-    plot_trait_df <- fdis_trait_func(df = trait_df)[[i]] %>% 
-      rownames_to_column(var = "Species") %>% 
-      filter(Species %in% names(plot_abun_matrix %>% data.frame())) %>% 
-      column_to_rownames(var = "Species") %>% 
-      select(SLA)
-    fdis_value <- fdisp(gowdis(plot_trait_df), plot_abun_matrix)
-    list_fdis[[i]] <- fdis_value$FDis
-  }
-  return(data.frame(unique(ksr_trait$Plot), unlist(list_fdis)) %>% 
-           rename("Plot" = "unique.ksr_trait.Plot.", "FDis" = "unlist.list_fdis."))
-}
-
-fdis_value_func(trait_df = ksr_trait, abun_df = ksr_abundance)
-```
-
-FDis calculation using the entire community species pool:
+*FDis is calculated using the entire community species pool*
 
 ```{r}
 fdis_value_func <- function(trait_df, abun_matrix){
@@ -288,8 +239,14 @@ fdis_value_func(trait_df = ksr_trait_sum_leaf, abun_matrix = ksr_abun_sum)
 Note that R Documentation for the REND function describes its calculation as being "based on the TPDc of the considered communities; therefore results are independent of any underlying feature of the species that compose the communities".
 
 ```{r}
+# REND(TPDc = TPDc(TPDs = TPDs(species = ksr_REND_trait$Species, traits = ksr_REND_trait[ , 3], trait_ranges = c(0, Inf)), sampUnit = ksr_REND_abundance))
+# 
+# REND(TPDc = TPDc(TPDs = TPDs(species = ksr_REND_trait_leaf$Species, traits = ksr_REND_trait_leaf[ , 3], trait_ranges = c(0, Inf)), sampUnit = ksr_REND_abundance_leaf))
+```
+
+```{r}
 fric_value_func <- function(trait_df, abun_matrix){
-  fric_value_list <- REND(TPDc = TPDc(TPDs = TPDs(species = trait_df$Species, traits = trait_df$`SLA_.cm2.g.`), sampUnit = abun_matrix))
+  fric_value_list <- REND(TPDc = TPDc(TPDs = TPDs(species = trait_df$Species, traits = trait_df[ , 3]), sampUnit = abun_matrix))
   fric_value_df <- data.frame(rownames(abun_matrix), unname(fric_value_list$communities$FRichness)) %>% 
     rename("Plot" = "rownames.abun_matrix.", "FRic" = "unname.fric_value_list.communities.FRichness.")
   fric_value_df$Plot <- as.numeric(levels(fric_value_df$Plot)[fric_value_df$Plot])
@@ -298,15 +255,19 @@ fric_value_func <- function(trait_df, abun_matrix){
 
 fric_value_func(trait_df = ksr_REND_trait, abun_matrix = ksr_REND_abundance)
 
+#fric_value_func(trait_df = ksr_REND_trait_leaf, abun_matrix = ksr_REND_abundance_leaf)
+
 feve_value_func <- function(trait_df, abun_matrix){
-  feve_value_list <- REND(TPDc = TPDc(TPDs = TPDs(species = trait_df$Species, traits = trait_df$`SLA_.cm2.g.`), sampUnit = abun_matrix))
-  feve_value_df <- data.frame(rownames(abun_matrix), unname(feve_value_list$communities$FEvenness)) %>% 
+  feve_value_list <- REND(TPDc = TPDc(TPDs = TPDs(species = trait_df$Species, traits = trait_df[ , 3]), sampUnit = abun_matrix))
+  feve_value_df <- data.frame(rownames(abun_matrix), unname(feve_value_list$communities$FEvenness)) %>%
     rename("Plot" = "rownames.abun_matrix.", "FEve" = "unname.feve_value_list.communities.FEvenness.")
   feve_value_df$Plot <- as.numeric(levels(feve_value_df$Plot)[feve_value_df$Plot])
   return(feve_value_df)
 }
 
 feve_value_func(trait_df = ksr_REND_trait, abun_matrix = ksr_REND_abundance)
+
+#feve_value_func(trait_df = ksr_REND_trait_leaf, abun_matrix = ksr_REND_abundance)
 ```
 
 ## Shannon diversity
@@ -579,29 +540,33 @@ fric_exp_df_func <- function(trait_df, abun_df, method, n){
 
 # Errant Poisson distribution
 set.seed(2501)
-fric_exp_pois_df <- fric_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
+fric_exp_pois_df_sla <- fric_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
 
 # Errant binomial distribution
 set.seed(2501)
-fric_exp_binom_df <- fric_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
+fric_exp_binom_df_sla <- fric_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
 ```
 
 ### Visualization (FRic - True vs Errant)
 
 ```{r}
-ggplot(data = fric_exp_pois_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
+scatter_fric_poisson_sla <- ggplot(data = fric_exp_pois_df_sla, aes(x = True_FRic, y = Mean_Errant_FRic))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FRic - SD_Errant_FRic, ymax = Mean_Errant_FRic + SD_Errant_FRic))+
   geom_abline(slope = 1)+
   labs(x = "True FRic", y = "Mean Errant FRic", title = "Scatterplot of true FRic values against errant FRic values
-       constructed by random Poisson distributions")
+       constructed by random Poisson distributions (SLA)")
 
-ggplot(data = fric_exp_binom_df, aes(x = True_FRic, y = Mean_Errant_FRic))+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_fric_poisson_sla.png", plot = scatter_fric_poisson_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_fric_binomial_sla <- ggplot(data = fric_exp_binom_df_sla, aes(x = True_FRic, y = Mean_Errant_FRic))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FRic - SD_Errant_FRic, ymax = Mean_Errant_FRic + SD_Errant_FRic))+
   geom_abline(slope = 1)+
   labs(x = "True FRic", y = "Mean Errant FRic", title = "Scatterplot of true FRic values against errant FRic values
-       constructed by random binomial distributions (prob = 0.8)")
+       constructed by random binomial distributions (prob = 0.8) (SLA)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_fric_binomial_sla.png", plot = scatter_fric_binomial_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
 ```
 
 ## Functional evenness (FEve)
@@ -628,29 +593,33 @@ feve_exp_df_func <- function(trait_df, abun_df, method, n){
 
 # Errant Poisson distribution
 set.seed(2501)
-feve_exp_pois_df <- feve_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
+feve_exp_pois_df_sla <- feve_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "Poisson", n = 100)
 
 # Errant binomial distribution
 set.seed(2501)
-feve_exp_binom_df <- feve_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
+feve_exp_binom_df_sla <- feve_exp_df_func(trait_df = ksr_REND_trait, abun_df = ksr_REND_abundance, method = "binomial", n = 100)
 ```
 
 ### Visualization (FEve - True vs Errant)
 
 ```{r}
-ggplot(data = feve_exp_pois_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
+scatter_feve_poisson_sla <- ggplot(data = feve_exp_pois_df_sla, aes(x = True_FEve, y = Mean_Errant_FEve))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FEve - SD_Errant_FEve, ymax = Mean_Errant_FEve + SD_Errant_FEve))+
   geom_abline(slope = 1)+
   labs(x = "True FEve", y = "Mean Errant FEve", title = "Scatterplot of true FEve values against errant FEve values
-       constructed by random Poisson distributions")
+       constructed by random Poisson distributions (SLA)")
 
-ggplot(data = feve_exp_binom_df, aes(x = True_FEve, y = Mean_Errant_FEve))+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_feve_poisson_sla.png", plot = scatter_feve_poisson_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_feve_binomial_sla <- ggplot(data = feve_exp_binom_df_sla, aes(x = True_FEve, y = Mean_Errant_FEve))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_FEve - SD_Errant_FEve, ymax = Mean_Errant_FEve + SD_Errant_FEve))+
   geom_abline(slope = 1)+
   labs(x = "True FEve", y = "Mean Errant FEve", title = "Scatterplot of true FEve values against errant FEve values
-       constructed by random binomial distributions (prob = 0.8)")
+       constructed by random binomial distributions (prob = 0.8) (SLA)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_feve_binomial_sla.png", plot = scatter_feve_binomial_sla, dpi = 300, width = par("din")[1], height = par("din")[2])
 ```
 
 ## Shannon diversity
@@ -687,19 +656,23 @@ shannon_exp_binom_df <- shannon_exp_df_func(abun_df = ksr_abundance, method = "b
 ### Visualization (Shannon - True vs Errant)
 
 ```{r}
-ggplot(data = shannon_exp_pois_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
+scatter_shannon_poisson <- ggplot(data = shannon_exp_pois_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_Shannon - SD_Errant_Shannon, ymax = Mean_Errant_Shannon + SD_Errant_Shannon))+
   geom_abline(slope = 1)+
   labs(x = "True Shannon", y = "Mean Errant Shannon", title = "Scatterplot of true Shannon values against errant Shannon values
        constructed by random Poisson distributions")
 
-ggplot(data = shannon_exp_binom_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_shannon_poisson.png", plot = scatter_shannon_poisson, dpi = 300, width = par("din")[1], height = par("din")[2])
+
+scatter_shannon_binomial <- ggplot(data = shannon_exp_binom_df, aes(x = True_Shannon, y = Mean_Errant_Shannon))+
   geom_point()+
   geom_errorbar(aes(ymin = Mean_Errant_Shannon - SD_Errant_Shannon, ymax = Mean_Errant_Shannon + SD_Errant_Shannon))+
   geom_abline(slope = 1)+
   labs(x = "True Shannon", y = "Mean Errant Shannon", title = "Scatterplot of true Shannon values against errant Shannon values
        constructed by random binomial distributions (prob = 0.8)")
+
+ggsave("/Users/John/Desktop/Current Courses/EEB498/EEB498_IndpProj/Plots/scatter_shannon_binomial.png", plot = scatter_shannon_binomial, dpi = 300, width = par("din")[1], height = par("din")[2])
 ```
 
 # Functional trait distributions
